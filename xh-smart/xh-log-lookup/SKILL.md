@@ -15,6 +15,23 @@ metadata:
 
 ## 强制规则
 
+### 查询方法
+- 每次会话首次执行**代码锚点**校验前，按 `references/update-master-branch.md` 更新对应服务仓库的 master 分支（路径：`/Users/user/mingh/workspace/{服务名}`，服务名参考业务路由表）
+- 看代码确认日志格式，再查 CLS；不要凭空猜日志关键词。本地仓库代码入口在:/Users/user/mingh/workspace下
+- 子模块入口表里的推荐查询只是通过代码锚点校验后的首查模板，不是唯一真相。若在子模块未定位到代码锚点, 需要提问用户来获取更详细的信息,直到能定位到代码入口
+- 执行入口表推荐查询前，先校验 `方法入口`、`serviceName` 和固定 `message` 片段是否仍能和当前代码匹配；可用 `tools/validate_query_anchors.py` 辅助检查。
+- 标识符值优先直接放入 `message:\"{value}\"`，禁止加 `cid:`、`orderId:`、`contractNo:`
+- `traceId:\"{value}\"` 查询不加 `serviceName`，避免漏掉跨服务日志。
+- 日志查询sql中如果包含中文, 查询不要直接放入 `queryBase64`。使用注入方案：先用 ASCII queryBase64 URL 加载页面，再通过 contenteditable + `execCommand('insertText')` + `String.fromCharCode()` 注入中文查询（详见 `references/cls-react-contenteditable-injection.md`）
+- 日志平台查询常用key:
+
+| ***key*** | ***包含的值*** | ***说明*** |
+|----|----|----|
+| **serviceName** | `order`,`order-batch`,`order-batch-timing`,`h5-loan,protocol`,`protocol-batch`,`protocol-batch-timing`,`account`,`cif`,`datainquiry`,`loki-webapp` | 服务名,日志查询sql拼装条件之一,如:serviceName:"order"
+| **level** | `INFO`,`ERROR`,`WARN`,`DEBUG` | 日志级别,异常查询时常用 `ERROR` 级别 |
+| **env** | `prod`,`uat`,`test1`,`test2`,`test3`,`test4`,`test5`,`test6`,`test7`,`test8`,`test9`,`test10`,`test11`  | 用户不指定时默认使用`prod`,如果查测试环境,若用户未指定查哪个`test`环境, 默认不加该条件,指定后格式:`env`:"`test[?]`"  |
+| **traceId** | 格式: 数字,字母,字母+数字组合 | 通常用户输入或者自主决策需要根据`tractId`去查询日志时,注意:根据`traceId`查询时通常不拼接其它查询条件,除非用户指定查哪个服务的`tractId` |
+
 ### 浏览器和 CLS
 
 - CLS/Argus URL 只能通过用户本地 Chrome + AppleScript 访问，禁止 Hermes 云端 `browser_*` 工具访问 `argus.xhdev.xyz` 或 `datasight-*.clsconsole.tencent-cloud.com`。
@@ -29,24 +46,6 @@ metadata:
 - 只有脚本执行失败时，才降级为 Markdown；降级也必须包含 **CLS** 跳转链接和扩大范围链接。
 - 卡片按钮 **URL** 必须包含 `topic_id`、`time`、`queryBase64`。
 - 非统计类查询（结果跨多个线程时除外），当查询结果集中在单个线程时，返回的飞书卡片必须带上 `traceId`，卡片 **URL** 只带 `traceId` 即可
-
-
-### 查询方法
-
-- 先看代码确认日志格式，再查 CLS；不要凭空猜日志关键词。本地仓库代码入口在:/Users/user/mingh/workspace下
-- 子模块入口表里的推荐查询只是通过代码锚点校验后的首查模板，不是唯一真相。若在子模块未定位到代码锚点, 需要提问用户来获取更详细的信息,直到能定位到代码入口
-- 执行入口表推荐查询前，先校验 `方法入口`、`serviceName` 和固定 `message` 片段是否仍能和当前代码匹配；可用 `tools/validate_query_anchors.py` 辅助检查。
-- 标识符值优先直接放入 `message:\"{value}\"`，禁止加 `cid:`、`orderId:`、`contractNo:`
-- `traceId:\"{value}\"` 查询不加 `serviceName`，避免漏掉跨服务日志。
-- 日志查询sql中如果包含中文, 查询不要直接放入 `queryBase64`。使用注入方案：先用 ASCII queryBase64 URL 加载页面，再通过 contenteditable + `execCommand('insertText')` + `String.fromCharCode()` 注入中文查询（详见 `references/cls-react-contenteditable-injection.md`）
-- 日志平台查询常用key:
-
-| ***key*** | ***包含的值*** | ***说明*** |
-|----|----|----|
-| **serviceName** | `order`,`order-batch`,`order-batch-timing`,`h5-loan,protocol`,`protocol-batch`,`protocol-batch-timing`,`account`,`cif`,`datainquiry`,`loki-webapp` | 服务名,日志查询sql拼装条件之一,如:serviceName:"order"
-| **level** | `INFO`,`ERROR`,`WARN`,`DEBUG` | 日志级别,异常查询时常用 `ERROR` 级别 |
-| **env** | `prod`,`uat`,`test1`,`test2`,`test3`,`test4`,`test5`,`test6`,`test7`,`test8`,`test9`,`test10`,`test11`  | 用户不指定时默认使用`prod`,如果查测试环境,若用户未指定查哪个`test`环境, 默认不加该条件,指定后格式:`env`:"`test[?]`"  |
-| **traceId** | 格式: 数字,字母,字母+数字组合 | 通常用户输入或者自主决策需要根据`tractId`去查询日志时,注意:根据`traceId`查询时通常不拼接其它查询条件,除非用户指定查哪个服务的`tractId` |
 
  
 ### ⚠️ 0 条结果排查清单
@@ -226,6 +225,7 @@ python3 /Users/user/.hermes/skills/xh-smart/xh-log-lookup/tools/send_feishu_card
 
 ## References
 
+- `references/update-master-branch.md`：更新 `master` 分支代码
 - `references/cls-local-chrome-access.md`：本地 Chrome 专用窗口访问 CLS
 - `references/cls-dom-extraction.md`：全文提取、加载更多、CK/CS 合同号解析
 - `references/cls-query-pitfalls.md`：CLS 高频坑和恢复方式
