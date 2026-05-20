@@ -1,6 +1,6 @@
 ---
 name: xh-log-lookup
-description: 生产/测试环境日志排查主控。用于查询 CLS/Argus 日志、traceId/线程号、orderId、cid、contractNo、下单/还款/权益/放款/签约异常、存量合同状态、健康检查，以及通过本地 Chrome 发送飞书卡片。
+description: 生产/测试环境日志排查主控。用于查询 CLS/Argus 日志、traceId/线程号、orderId、cid、contractNo、identityNo、mobileNo/mobilePhone、下单/还款/权益/放款/签约异常、健康检查，以及通过本地 Chrome 发送飞书卡片。
 metadata:
   hermes:
     version: 2.0.2
