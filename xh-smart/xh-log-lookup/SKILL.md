@@ -1,6 +1,6 @@
 ---
 name: xh-log-lookup
-description: 当用户需要查询生产或测试环境日志时，启用此技能。此技能为生产和测试环境日志查询流程主控，可以通过：线程号（traceId），订单号（orderId），用户ID（cid，userId），合同号（contractNo），手机号（mobileNo，mobilePhone），身份证号（idNo，identityNo）等信息查询借款能力，借款内容（借款试算），签约，下单，放款，还款各业务模块日志，帮助用户快速定位问题根因。
+description: 当用户需要查询生产或测试环境日志时，启用此技能。此技能为生产和测试环境日志查询流程主控，可以通过：线程号（traceId），订单号（orderId），用户ID（cid，userId），合同号（contractNo），手机号（mobileNo，mobilePhone），身份证号（idNo，identityNo）等信息查询借款能力，借款内容（借款试算），签约，下单，权益，放款，还款各业务模块日志，帮助用户快速定位问题根因。
 metadata:
   hermes:
     version: 2.0.2
