@@ -1,6 +1,6 @@
 # my-skills
 
-## Build Agent Skills For Myself
+## Build Agent Skills
 
 ## Skills
 
