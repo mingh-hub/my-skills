@@ -1,0 +1,4 @@
+interface:
+  display_name: "XH Log Lookup"
+  short_description: "CLS/Argus 日志排查与飞书卡片输出"
+  default_prompt: "使用 $xh-log-lookup 排查生产/测试环境日志问题，可提供 traceId、orderId、cid 或 contractNo。"

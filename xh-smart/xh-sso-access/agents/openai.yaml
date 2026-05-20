@@ -1,0 +1,4 @@
+interface:
+  display_name: "XH SSO Access"
+  short_description: "内部 SSO、本地 Chrome 与 Argus 会话"
+  default_prompt: "使用 $xh-sso-access 恢复或验证本地 Chrome 的 SSO 会话，用于 Argus、JANUS、PMP 或其他内部 Web 应用。"
