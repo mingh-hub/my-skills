@@ -21,7 +21,6 @@ metadata:
 - 子模块入口表格里的推荐查询只是通过代码锚点校验后的首查模板，不是唯一真相。若在子模块未定位到代码锚点, 需要提问用户来获取更详细的信息,直到能定位到代码入口
 - 执行入口表格推荐查询前，先校验 `方法入口`、`serviceName` 和固定 `message` 片段是否仍能和当前代码匹配；可用 `tools/validate_query_anchors.py` 辅助检查。
 - 标识符值优先直接放入 `message:\"{value}\"`，禁止加 `cid:`、`orderId:`、`contractNo:`
-- `traceId:\"{value}\"`。
 - 日志查询sql中如果包含中文, 查询不要直接放入 `queryBase64`。使用注入方案：先用 ASCII queryBase64 URL 加载页面，再通过 contenteditable + `execCommand('insertText')` + `String.fromCharCode()` 注入中文查询（详见 `references/cls-react-contenteditable-injection.md`）
 - 日志平台查询常用key:
 
@@ -81,17 +80,17 @@ metadata:
 | 关键词 | 子 Skill | 业务模块 |
 |--------|---------|--------|
 | 签约、重签、重新签约、RESIGN、SIGNING_ISSUE、协议、绑卡、银行卡签约、代扣协议、支付协议 | `xh-log-lookup-sign` | 签约模块 |
-| 下单、端内下单、自营下单、api下单、订单、拦截、反欺诈 | `xh-log-lookup-order` | 下单模块 |
-| 权益、会员、VIP、优惠券、乐活卡、coupon，尊享卡，拒就得，加速卡 | `xh-log-lookup-benefit` | 权益模块 |
-| 放款、资金路由、route、解H、loki放款 | `xh-log-lookup-loan` | 放款模块 |
-| 还款、扣款、逾期、代扣、结清、repay、债转 | `xh-log-lookup-repay` | 还款模块 |
+| 下单、端内（自营）下单、api下单、订单、拦截、反欺诈、借款能力预检、预检、借款试算、试算 | `xh-log-lookup-order` | 下单模块 |
+| 权益、会员、VIP、优惠券、乐活卡、coupon、尊享卡、拒就赔、加速卡、获额卡、返现券 | `xh-log-lookup-benefit` | 权益模块 |
+| 放款、资金路由、route、解H、loki放款、拒就赔、提前结清、特项额度 | `xh-log-lookup-loan` | 放款模块 |
+| 还款、扣款、逾期、代扣、结清、repay、债转、好友代付、聚合支付 | `xh-log-lookup-repay` | 还款模块 |
 
 匹配不到业务模块时，先问用户确认。
 
 ## 标准工作流
 
 1. 理解问题，提取环境、时间范围、标识符和业务模块。
-2. 分类意图：流程追踪、存量状态查询、健康检查或 SSO。
+2. 分类意图：流程追踪、健康检查或 SSO。
 3. 路由到对应业务子 Skill，读取其入口日志、失败模式和 reference 指引。
 4. 对入口表推荐查询做代码锚点校验；不匹配时降级到标识符值搜并 grep 代码确认真实日志前缀、logger 和字段。
 5. 组装 CLS 查询语句，使用 `tools/cls_query.py` 查询并提取全文。
@@ -145,12 +144,17 @@ python3 /Users/user/.hermes/skills/xh-smart/xh-log-lookup/tools/cls_query.py \
 ### 校验入口表锚点
 
 ```bash
+# 一键汇总全部子模块锚点有效性
+python3 /Users/user/.hermes/skills/xh-smart/xh-log-lookup/tools/validate_query_anchors.py \
+  --all --summary
+
+# 校验单个子模块（详细输出）
 python3 /Users/user/.hermes/skills/xh-smart/xh-log-lookup/tools/validate_query_anchors.py \
   --skill /Users/user/.hermes/skills/xh-smart/xh-log-lookup/xh-log-lookup-order/SKILL.md \
   --source-root /Users/user/mingh/workspace/order
 ```
 
-输出会标记每行方法入口、服务名和固定 message 锚点是否匹配，并给出建议降级查询。校验不通过时，推荐查询只能作为历史线索，不能作为主查询。
+`--all` 自动发现所有 `xh-log-lookup-*/SKILL.md` 子模块，`--summary` 输出精简汇总表（Y/N 有效性 + 无效原因）。校验不通过时，推荐查询只能作为历史线索，不能作为主查询。
 
 ## CLS 环境
 
