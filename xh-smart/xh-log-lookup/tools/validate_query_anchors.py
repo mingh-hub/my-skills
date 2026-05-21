@@ -272,9 +272,60 @@ def print_text(results: list[dict[str, object]]) -> None:
         print()
 
 
+def discover_sub_skills() -> list[Path]:
+    skill_root = Path(__file__).resolve().parent.parent
+    paths = sorted(skill_root.glob("xh-log-lookup-*/SKILL.md"))
+    return paths
+
+
+def warn_reason(result: dict[str, object]) -> str:
+    parts: list[str] = []
+    if result["method_status"] == "warn":
+        parts.append(str(result["method_detail"]))
+    if result["service_status"] == "warn":
+        parts.append(str(result["service_detail"]))
+    if result["missing_message_anchors"]:
+        anchors = ", ".join(result["missing_message_anchors"])
+        parts.append(f"锚点未匹配: {anchors}")
+    return "; ".join(parts)
+
+
+def print_summary(results: list[dict[str, object]]) -> None:
+    col_mod = max(len(Path(str(r["skill"])).parent.name) for r in results)
+    col_mod = max(col_mod, 4)
+    col_scene = max(len(str(r["scene"])) for r in results)
+    col_scene = max(col_scene, 4)
+
+    header = f"{'模块':<{col_mod}}  {'场景':<{col_scene}}  有效"
+    sep = "─" * (col_mod + col_scene + 8)
+
+    print("=== 锚点有效性汇总 ===")
+    print(header)
+    print(sep)
+
+    ok_count = 0
+    warn_count = 0
+    for r in results:
+        status = overall_status(r)
+        mod_name = Path(str(r["skill"])).parent.name
+        valid = "Y" if status != "WARN" else "N"
+        line = f"{mod_name:<{col_mod}}  {str(r['scene']):<{col_scene}}  {valid}"
+        if valid == "N":
+            line += f"  ← {warn_reason(r)}"
+            warn_count += 1
+        else:
+            ok_count += 1
+        print(line)
+
+    print(sep)
+    print(f"合计: {len(results)} 条 | 有效: {ok_count} | 无效: {warn_count}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--skill", action="append", required=True, help="Path to a SKILL.md file")
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--skill", action="append", help="Path to a SKILL.md file")
+    group.add_argument("--all", action="store_true", help="Auto-discover all sub-skill SKILL.md files")
     parser.add_argument(
         "--source-root",
         action="append",
@@ -283,18 +334,29 @@ def main() -> int:
         help="Source repository root. Can be provided multiple times.",
     )
     parser.add_argument("--json", action="store_true", help="Print JSON instead of text")
+    parser.add_argument("--summary", action="store_true", help="Print concise summary table")
     args = parser.parse_args()
+
+    if args.all:
+        skill_paths = discover_sub_skills()
+        if not skill_paths:
+            print("未发现任何 xh-log-lookup-*/SKILL.md 子模块")
+            return 1
+    else:
+        skill_paths = [Path(s) for s in args.skill]
 
     source_roots = args.source_root or [root for root in DEFAULT_SOURCE_ROOTS if root.exists()]
     class_index = build_class_index(source_roots)
 
     rows: list[AnchorRow] = []
-    for skill in args.skill:
-        rows.extend(parse_anchor_rows(Path(skill)))
+    for skill in skill_paths:
+        rows.extend(parse_anchor_rows(skill))
 
     results = [validate_row(row, class_index) for row in rows]
     if args.json:
         print(json.dumps(results, ensure_ascii=False, indent=2))
+    elif args.summary:
+        print_summary(results)
     else:
         print_text(results)
 

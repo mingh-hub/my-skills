@@ -72,22 +72,19 @@ metadata:
 
 | 意图 | 识别特征 | 查询策略 |
 |------|---------|---------|
-| 流程追踪 | 下单失败、还款失败、放款异常、权益异常、签约异常、特定 traceId/orderId/contractNo | 路由到业务子 Skill，按入口日志定位 traceId，再查全链路 |
-| 存量状态查询 | 有多少笔未结清、名下合同、客户当前状态 | 先 grep 代码找打印状态字段的日志，再用 cid/contractNo 值搜 CLS |
-| 健康检查 | 今天下单情况、最近有没有异常、无具体标识符 | 使用业务子 Skill 的总览式查询步骤 |
+| 流程追踪 | 借款、下单、放款、还款、权益、签约、绑卡、指定 `traceId`/`orderId`/`contractNo` | 路由到业务子 Skill，按入口日志定位 `traceId`，再查全链路 |
+| 健康检查 | 最近有没有异常、无具体标识符 | 使用业务子 Skill 的总览式查询步骤 |
 | SSO/登录 | Argus/CLS 要登录、JANUS/PMP 会话失效 | 使用 `xh-sso-access` |
-
-常见误判：用户问\"这个 cid 名下有多少笔未结清合同\"时，不要搜 `[借款下单]下单请求为` 等新增入口日志；这些只反映新下单，不反映存量状态。
 
 ## 业务路由
 
 | 关键词 | 子 Skill | 业务模块 |
 |--------|---------|--------|
 | 签约、重签、重新签约、RESIGN、SIGNING_ISSUE、协议、绑卡、银行卡签约、代扣协议、支付协议 | `xh-log-lookup-sign` | 签约模块 |
-| 下单、订单、order、借款、续签、拦截、反欺诈 | `xh-log-lookup-order` | 订单模块 |
-| 权益、会员、VIP、优惠券、乐活卡、coupon | `xh-log-lookup-benefit` | 权益模块 |
-| 还款、扣款、逾期、代扣、结清、repay | `xh-log-lookup-repay` | 还款模块 |
-| 放款、资金路由、route、解H | `xh-log-lookup-loan` | 放款模块 |
+| 下单、端内下单、自营下单、api下单、订单、拦截、反欺诈 | `xh-log-lookup-order` | 下单模块 |
+| 权益、会员、VIP、优惠券、乐活卡、coupon，尊享卡，拒就得，加速卡 | `xh-log-lookup-benefit` | 权益模块 |
+| 放款、资金路由、route、解H、loki放款 | `xh-log-lookup-loan` | 放款模块 |
+| 还款、扣款、逾期、代扣、结清、repay、债转 | `xh-log-lookup-repay` | 还款模块 |
 
 匹配不到业务模块时，先问用户确认。
 
