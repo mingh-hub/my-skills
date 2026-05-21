@@ -169,7 +169,8 @@ end tell
     return run_osascript(script, timeout=timeout)
 
 
-def load_more(window_id: str, max_clicks: int, delay: float) -> int:
+def load_more(window_id: str, max_clicks: int, delay: float) -> tuple[int, bool]:
+    """返回 (点击次数, 是否还有更多未加载的日志)"""
     clicks = 0
     for _ in range(max_clicks):
         execute_js(
@@ -185,13 +186,23 @@ def load_more(window_id: str, max_clicks: int, delay: float) -> int:
             timeout=10,
         )
         if has_more.strip() != "yes":
-            break
-    return clicks
+            return clicks, False
+    still_has_more = execute_js(
+        window_id,
+        "document.body.innerText.includes('加载更多') ? 'yes' : 'no'",
+        timeout=10,
+    )
+    return clicks, still_has_more.strip() == "yes"
 
 
 def parse_log_count(text: str) -> int:
     match = re.search(r"日志条数\s*([\d,]+)", text)
     return int(match.group(1).replace(",", "")) if match else 0
+
+
+def count_loaded_logs(text: str) -> int:
+    """从提取的全文中统计实际加载的日志条目数（按时间戳行计数）"""
+    return len(re.findall(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}", text))
 
 
 def parse_contracts(text: str) -> list[str]:
@@ -244,6 +255,7 @@ def main() -> int:
     text = ""
     window_id = None
     load_more_clicks = 0
+    has_more = False
     output_path = args.output
 
     if args.input_text:
@@ -262,9 +274,12 @@ def main() -> int:
             }
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 1
-        load_more_clicks = load_more(window_id, args.max_load_more, args.delay)
+        load_more_clicks, has_more = load_more(window_id, args.max_load_more, args.delay)
         text = execute_js(window_id, "document.body.innerText", timeout=60)
         output_path = write_text(args.output, text)
+
+    log_count = parse_log_count(text) if text else 0
+    loaded_count = count_loaded_logs(text) if text else 0
 
     result = {
         "env": args.env,
@@ -279,7 +294,10 @@ def main() -> int:
         "output_path": output_path,
         "window_id": window_id,
         "load_more_clicks": load_more_clicks,
-        "log_count": parse_log_count(text) if text else 0,
+        "log_count": log_count,
+        "loaded_count": loaded_count,
+        "has_more": has_more,
+        "is_complete": not has_more,
         "services": parse_services(text) if text else [],
         "contracts": parse_contracts(text) if text else [],
     }

@@ -24,12 +24,12 @@ metadata:
 - 日志查询sql中如果包含中文, 查询不要直接放入 `queryBase64`。使用注入方案：先用 ASCII queryBase64 URL 加载页面，再通过 contenteditable + `execCommand('insertText')` + `String.fromCharCode()` 注入中文查询（详见 `references/cls-react-contenteditable-injection.md`）
 - 日志平台查询常用key:
 
-| ***key*** | ***包含的值*** | ***说明*** |
-|----|----|----|
-| **serviceName** | `order`,`order-batch`,`order-batch-timing`,`h5-loan,protocol`,`protocol-batch`,`protocol-batch-timing`,`account`,`cif`,`datainquiry`,`loki-webapp` | 服务名,日志查询sql拼装条件之一,如:serviceName:"order"
-| **level** | `INFO`,`ERROR`,`WARN`,`DEBUG` | 日志级别,异常查询时常用 `ERROR` 级别 |
-| **env** | `prod`,`uat`,`test1`,`test2`,`test3`,`test4`,`test5`,`test6`,`test7`,`test8`,`test9`,`test10`,`test11`  | 用户不指定时默认使用`prod`，如果查测试环境,若用户未指定查哪个`test`环境, 默认不加该条件,指定后格式：`env:\"{value}\"`  |
-| **traceId** | 格式: 数字，字母，字母+数字组合 | 通常用户输入或者根据其它条件能确认`tractId`时。注意：根据`traceId`查询时一般不拼接其它查询条件 |
+  | ***key*** | ***包含的值*** | ***说明*** |
+  |----|----|----|
+  | **serviceName** | `order`,`order-batch`,`order-batch-timing`,`h5-loan,protocol`,`protocol-batch`,`protocol-batch-timing`,`account`,`cif`,`datainquiry`,`loki-webapp` | 服务名,日志查询sql拼装条件之一,如:serviceName:"order"
+  | **level** | `INFO`,`ERROR`,`WARN`,`DEBUG` | 日志级别,异常查询时常用 `ERROR` 级别 |
+  | **env** | `prod`,`uat`,`test1`,`test2`,`test3`,`test4`,`test5`,`test6`,`test7`,`test8`,`test9`,`test10`,`test11`  | 用户不指定时默认使用`prod`，如果查测试环境,若用户未指定查哪个`test`环境, 默认不加该条件,指定后格式：`env:\"{value}\"`  |
+  | **traceId** | 格式: 数字，字母，字母+数字组合 | 通常用户输入或者根据其它条件能确认`tractId`时。注意：根据`traceId`查询时一般不拼接其它查询条件 |
 
 ### 浏览器和 CLS
 
@@ -38,6 +38,7 @@ metadata:
 - 优先使用 `tools/cls_query.py` 构造 URL、打开专用窗口、加载更多、提取 `document.body.innerText`。
 - 不要用 `document.body.innerText.substring(0,N)` 判断结果；CLS 日志数据在页面文本后部。
 - `traceId` 查询也可能超过 20 条；必须加载更多直到按钮消失或达到合理上限。
+- **分析前必须校验完整性**：对比 `log_count`（CLS 报告总数）与 `loaded_count`（实际加载数）。若 `is_complete` 为 false 或 `loaded_count` 远小于 `log_count`，禁止直接下结论。必须：(1) 继续加载更多（增大 `--max-load-more`），或 (2) 缩小查询范围分批查询，或 (3) 在飞书卡片中明确标注"基于 N/M 条采样分析，结论可能不完整"并使用黄色卡片。
 
 ### 飞书输出
 
@@ -95,10 +96,11 @@ metadata:
 4. 对入口表推荐查询做代码锚点校验；不匹配时降级到标识符值搜并 grep 代码确认真实日志前缀、logger 和字段。
 5. 组装 CLS 查询语句，使用 `tools/cls_query.py` 查询并提取全文。
 6. 推荐查询 0 命中时，按\"值搜 → 扩大时间 → 去掉 serviceName 跨服务 → 再 grep 当前代码\"的顺序回退。
-7. 分析日志，说明命中、未命中、topic、时间范围和查询限制。
-8. 使用 `tools/send_feishu_card.py` 发送卡片。
-9. 如查询不完整，发黄色卡片并给出下一步需要的标识符或更大时间范围。
-10. 飞书卡片发送成功后，调用 `cls_query.py --close` 关闭 CLS 浏览器窗口。
+7. **校验日志完整性**：确认 `is_complete` 为 true 且 `loaded_count` 接近 `log_count`。未加载完时，继续加载或在后续卡片中标注为采样分析。
+8. 分析日志，说明命中、未命中、topic、时间范围和查询限制。
+9. 使用 `tools/send_feishu_card.py` 发送卡片。
+10. 如查询不完整，发黄色卡片并给出下一步需要的标识符或更大时间范围。
+11. 飞书卡片发送成功后，调用 `cls_query.py --close` 关闭 CLS 浏览器窗口。
 
 ## CLS 工具
 
@@ -221,7 +223,7 @@ python3 /Users/user/.hermes/skills/xh-smart/xh-log-lookup/tools/send_feishu_card
 - 查了什么代码、找到了哪些日志前缀或 logger
 - CLS 查询语句、topic、时间范围
 - 命中的日志摘要和未命中的关键证据
-- 结果是否完整：是否加载更多、是否只采样、是否受时间范围限制
+- 结果是否完整：`loaded_count` vs `log_count`、`is_complete` 状态、是否受分页/时间范围限制。未完整加载时必须在卡片中标注
 - 飞书卡片是否发送成功；失败时说明降级链接
 
 ## References
