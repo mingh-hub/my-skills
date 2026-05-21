@@ -11,17 +11,17 @@ metadata:
 
 # xh-log-lookup — 日志查询主控
 
-处理生产/测试环境日志查询、业务异常排查、CLS 结果分析和飞书卡片输出。主控只负责意图分类、路由、强制约束和工具调用；业务细节在子 Skill 和 references 中。
+处理生产/测试环境日志查询、业务异常排查、CLS 结果及根因分析和**飞书卡片输出**。主控只负责意图分类、路由、强制约束和工具调用；业务细节在子 Skill 和 references 中。
 
 ## 强制规则
 
 ### 查询方法
 - 每次会话首次执行**代码锚点**校验前，按 `references/update-master-branch.md` 更新对应服务仓库的 master 分支（路径：`/Users/user/mingh/workspace/{服务名}`，服务名参考业务路由表）
 - 看代码确认日志格式，再查 CLS；不要凭空猜日志关键词。本地仓库代码入口在:/Users/user/mingh/workspace下
-- 子模块入口表里的推荐查询只是通过代码锚点校验后的首查模板，不是唯一真相。若在子模块未定位到代码锚点, 需要提问用户来获取更详细的信息,直到能定位到代码入口
-- 执行入口表推荐查询前，先校验 `方法入口`、`serviceName` 和固定 `message` 片段是否仍能和当前代码匹配；可用 `tools/validate_query_anchors.py` 辅助检查。
+- 子模块入口表格里的推荐查询只是通过代码锚点校验后的首查模板，不是唯一真相。若在子模块未定位到代码锚点, 需要提问用户来获取更详细的信息,直到能定位到代码入口
+- 执行入口表格推荐查询前，先校验 `方法入口`、`serviceName` 和固定 `message` 片段是否仍能和当前代码匹配；可用 `tools/validate_query_anchors.py` 辅助检查。
 - 标识符值优先直接放入 `message:\"{value}\"`，禁止加 `cid:`、`orderId:`、`contractNo:`
-- `traceId:\"{value}\"` 查询不加 `serviceName`，避免漏掉跨服务日志。
+- `traceId:\"{value}\"`。
 - 日志查询sql中如果包含中文, 查询不要直接放入 `queryBase64`。使用注入方案：先用 ASCII queryBase64 URL 加载页面，再通过 contenteditable + `execCommand('insertText')` + `String.fromCharCode()` 注入中文查询（详见 `references/cls-react-contenteditable-injection.md`）
 - 日志平台查询常用key:
 
@@ -29,35 +29,35 @@ metadata:
 |----|----|----|
 | **serviceName** | `order`,`order-batch`,`order-batch-timing`,`h5-loan,protocol`,`protocol-batch`,`protocol-batch-timing`,`account`,`cif`,`datainquiry`,`loki-webapp` | 服务名,日志查询sql拼装条件之一,如:serviceName:"order"
 | **level** | `INFO`,`ERROR`,`WARN`,`DEBUG` | 日志级别,异常查询时常用 `ERROR` 级别 |
-| **env** | `prod`,`uat`,`test1`,`test2`,`test3`,`test4`,`test5`,`test6`,`test7`,`test8`,`test9`,`test10`,`test11`  | 用户不指定时默认使用`prod`,如果查测试环境,若用户未指定查哪个`test`环境, 默认不加该条件,指定后格式:`env`:"`test[?]`"  |
-| **traceId** | 格式: 数字,字母,字母+数字组合 | 通常用户输入或者自主决策需要根据`tractId`去查询日志时,注意:根据`traceId`查询时通常不拼接其它查询条件,除非用户指定查哪个服务的`tractId` |
+| **env** | `prod`,`uat`,`test1`,`test2`,`test3`,`test4`,`test5`,`test6`,`test7`,`test8`,`test9`,`test10`,`test11`  | 用户不指定时默认使用`prod`，如果查测试环境,若用户未指定查哪个`test`环境, 默认不加该条件,指定后格式：`env:\"{value}\"`  |
+| **traceId** | 格式: 数字，字母，字母+数字组合 | 通常用户输入或者根据其它条件能确认`tractId`时。注意：根据`traceId`查询时一般不拼接其它查询条件 |
 
 ### 浏览器和 CLS
 
-- CLS/Argus URL 只能通过用户本地 Chrome + AppleScript 访问，禁止 Hermes 云端 `browser_*` 工具访问 `argus.xhdev.xyz` 或 `datasight-*.clsconsole.tencent-cloud.com`。
-- 禁止默认操作 `active tab of front window`。首次查询创建新的 Chrome window，后续查询复用该窗口，通过 window id 定向操作。发送飞书卡片后调用 `cls_query.py --close` 关闭窗口。若页面跳转到 argus.xhdev.xyz 登录页，提示用户在 Chrome 中完成登录后重试。
+- CLS/Argus URL 只能通过用户本地 Chrome + AppleScript 访问，禁止使用 Hermes 云端 `browser_*` 工具访问 `argus.xhdev.xyz` 或 `datasight-*.clsconsole.tencent-cloud.com`。
+- 禁止默认操作 `active tab of front window`。首次查询创建新的 Chrome window，后续查询复用该窗口，通过 window id 定向操作。发送飞书卡片后调用 `tools/cls_query.py --close` 关闭窗口。若页面跳转到 argus.xhdev.xyz 登录页，提示用户在 Chrome 中完成登录后重试。
 - 优先使用 `tools/cls_query.py` 构造 URL、打开专用窗口、加载更多、提取 `document.body.innerText`。
 - 不要用 `document.body.innerText.substring(0,N)` 判断结果；CLS 日志数据在页面文本后部。
-- traceId 查询也可能超过 20 条；必须加载更多直到按钮消失或达到合理上限。
+- `traceId` 查询也可能超过 20 条；必须加载更多直到按钮消失或达到合理上限。
 
 ### 飞书输出
 
-- 所有日志查询结果和分析结论必须通过 `tools/send_feishu_card.py` 发送飞书交互式卡片。包括：初始查询结果、跟进追查结果、根因分析、深度钻取。不要在聊天消息中直接输出 markdown 表格或分析报告——飞书聊天不渲染 markdown，只有卡片的 `lark_md` 元素才渲染。
-- 只有脚本执行失败时，才降级为 Markdown；降级也必须包含 **CLS** 跳转链接和扩大范围链接。
+- 初始查询结果、跟进追查结果、根因分析、深度钻取结果和分析结论必须通过 `tools/send_feishu_card.py` 发送飞书交互式卡片。
 - 卡片按钮 **URL** 必须包含 `topic_id`、`time`、`queryBase64`。
 - 非统计类查询（结果跨多个线程时除外），当查询结果集中在单个线程时，返回的飞书卡片必须带上 `traceId`，卡片 **URL** 只带 `traceId` 即可
+- 只有脚本执行失败时，才降级为 Markdown。
 
  
 ### ⚠️ 0 条结果排查清单
 
 查询返回 0 条时，**不要立即归因于查询语法**。按顺序排查：
 
-1. **时间窗口** — `now-5m,now` 是否真的覆盖了日志产生时间？扩大至 `now-30m,now` 或 `now-1h,now` 验证
+1. **时间窗口** — `now-1d,now` 是否真的覆盖了日志产生时间？扩大至 `now-7d,now` 或 `now-30d,now` 验证，能查到日志，说明`sql`语法没问题
 2. **topic 是否正确** — CLS hide* params 可能导致 topic 随机丢失，确认 topic_id 无误
 3. **分页未加载完** — CLS 每页只显示 20 条，`load_more_clicks` 是否足够？检查 `log_count` 字段
 4. **Chrome JS 权限** — AppleScript 报 `JavaScript 的功能已关闭` 时，Chrome 无法提取页面
 5. **`=` 等号查询退化** — 如果查询含 `message:\"字段=值\"` 且 `log_count` 显示为 topic 总量（数百万级），说明 CLS 退化为全量返回。加 `AND level:\"WARN\"/\"INFO\"` 等额外约束可恢复精确过滤。此时应以实际加载出的日志内容为准
-6. **最后才怀疑语法** — 大部分\"语法问题\"是时间窗口或分页导致的
+6. **最后才怀疑语法** — 大部分\"语法问题\"是时间窗口或分页导致的，此时需要将查询`sql`返回给用户，让用户协助确认查询`sql`是否存在问题，用户确认完毕后再进行查询
 
 ### 推荐查询锚点校验
 
