@@ -126,11 +126,11 @@ def build_card(title, color, cls_url, cls_url_expanded, data):
         for item in summary_fields:
             fields.append({
                 "is_short": True,
-                "text": {"tag": "lark_md", "content": f"**{item['label']}**"}
+                "text": {"tag": "markdown", "content": f"**{item['label']}**"}
             })
             fields.append({
                 "is_short": True,
-                "text": {"tag": "lark_md", "content": item["value"]}
+                "text": {"tag": "markdown", "content": item["value"]}
             })
         elements.append({"tag": "div", "fields": fields})
         elements.append({"tag": "hr"})
@@ -149,11 +149,11 @@ def build_card(title, color, cls_url, cls_url_expanded, data):
             chain_lines.append(f"{icon} `{t}` **{svc}** {content}")
         if log_count > 20:
             chain_lines.append(f"\n... 共 **{log_count}** 条日志，仅展示最近 10 条")
-        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": "\n".join(chain_lines)}})
+        elements.append({"tag": "div", "text": {"tag": "markdown", "content": "\n".join(chain_lines)}})
     elif log_count == 0 and not summary_fields:
         elements.append({
             "tag": "div",
-            "text": {"tag": "lark_md", "content": "**无匹配日志**\n\n可能原因：查询时间范围不对、serviceName 不匹配、或该请求未产生日志。"}
+            "text": {"tag": "markdown", "content": "**无匹配日志**\n\n可能原因：查询时间范围不对、serviceName 不匹配、或该请求未产生日志。"}
         })
 
     analysis = data.get("analysis", "")
@@ -161,7 +161,7 @@ def build_card(title, color, cls_url, cls_url_expanded, data):
         elements.append({"tag": "hr"})
         elements.append({
             "tag": "div",
-            "text": {"tag": "lark_md", "content": f"**📋 分析结论:**\n{analysis}"}
+            "text": {"tag": "markdown", "content": f"**📋 分析结论:**\n{analysis}"}
         })
 
     actions = []
