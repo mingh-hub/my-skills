@@ -17,7 +17,7 @@ metadata:
 
 | 意图 | 识别特征 | 查询策略 | 禁止操作 |
 |------|---------|---------|---------|
-| 流程追踪 | 下单成功、下单失败、下单失败原因 | 使用入口日志加客户输入信息(如客户id(`cid`，`userId`)，手机号(`mobilePhone`，`mobileNo`)，订单号(orderId))定位 traceId，再查全链路 | - |
+| 流程追踪 | 下单成功、下单失败、下单拦截、风控反欺诈... | 使用入口日志加客户输入信息(如客户id(`cid`，`userId`)，手机号(`mobilePhone`，`mobileNo`)，订单号(orderId))定位 traceId，再查全链路 | - |
 | 健康检查 | 按提示时间查看INFO、ERROR、WARN日志情况，没有时间默认近一天 | 使用健康检查 reference 的 Step 0→A→B→C→D | - |
 | **异常告警** | 异常告警情况、ERROR告警、近1小时异常 | 先用 `level:"ERROR"` 捕获系统异常，再结合`LoanOrderResult`对象中字段`success`的值为`false`捕获业务异常 |
 
@@ -25,7 +25,7 @@ metadata:
 
 主服务：`order`。
 
-常见关联：`h5-loan`、`loki-webapp`、`datainquiry`、`cif`、`account`、`underwriter`、`magic`、`member`。
+常见关联服务：`h5-loan`、`loki-webapp`、`datainquiry`、`cif`、`account`、`underwriter`、`magic`、`member`。
 
 ## 首查策略
 
