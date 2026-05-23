@@ -21,7 +21,7 @@ member, rubick, benefit, activity, order (CouponService), h5-loan (SelfLoanProce
 
 | 场景 | 方法入口 | 日志锚点/关键词 | 推荐查询 | 关键指标 | 说明 |
 |------|----------|----------------|----------|----------|------|
-| 优惠券查询 | `com.xhqb.order.biz.service.impl.CouponServiceImpl#checkCouponIsAvailable` | `[优惠券处理]查询优惠券是否可用` | `serviceName:"order" AND message:"[优惠券处理]" AND message:"{orderId或cid}"` | | 私有方法锚点，查询时优先用订单/客户值搜 |
+| 优惠券查询 | `com.xhqb.order.biz.service.impl.CouponServiceImpl#checkCouponIsAvailable` | `[优惠券处理]查询优惠券是否可用` | `serviceName:"order" AND message:"[优惠券处理]" AND message:"{orderId或cid}"` |  | 私有方法锚点，查询时优先用订单/客户值搜 |
 | 优惠券使用 | `com.xhqb.order.biz.service.impl.CouponServiceImpl#handleCouponDerate` | `[优惠券处理]调用账务使用优惠券` | `serviceName:"order" AND message:"[优惠券处理]调用账务" AND message:"{orderId}"` | | 账务调用失败时继续查 coupon 待处理记录 |
 | 返现券 | `com.xhqb.order.biz.service.event.cashback.CashBackEventListen#onApplicationEvent` | `[返现券]` | `serviceName:"order" AND message:"[返现券]" AND message:"{orderId}"` | | 还款成功事件和页面计算都可能出现返现券日志 |
 | 权益订单 | `com.xhqb.order.biz.service.impl.ChannelBenefitOrderServiceImpl#saveBenefitOrder` | `[权益订单]创建` | `serviceName:"order" AND message:"[权益订单]" AND message:"orderId:{orderId}"` | | 权益订单创建入口 |
