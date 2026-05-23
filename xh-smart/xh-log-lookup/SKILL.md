@@ -13,13 +13,29 @@ metadata:
 
 处理生产/测试环境日志查询、业务异常排查、CLS 结果及根因分析和**飞书卡片输出**。主控只负责意图分类、路由、强制约束和工具调用；业务细节在子 Skill 和 references 中。
 
+## 日志服务名和项目名映射关系表
+| serviceName | 项目名 |
+|----|----|
+|`order`|`order`|
+|`order-batch`|`order`|
+|`order-batch-timing`|`order`|
+|`h5-loan`|`H5LoanProject`|
+|`protocol`|`protocol`|
+|`protocol-batch`|`protocol`|
+|`protocol-batch-timing`|`protocol`|
+|`cif`|`cif`|
+|`account`|`account`|
+|`datainquiry`|`data-inquiry`|
+|`loki-webapp`|`loki`|
+|`weixin_h5api`|`weixin-h5api`|
+|`appServer`|`app-server`|
+
 ## 强制规则
 
 ### 查询方法
 - **环境默认规则**：用户未指定环境时，**必须查生产环境（prod）**。只有用户明确说"查测试环境"时才使用测试 topic。禁止自行假设或优先查测试环境。
-- 每次会话首次执行**代码锚点**校验前，按 `references/update-master-branch.md` 更新对应服务仓库的 master 分支（路径：`/Users/user/mingh/workspace/{服务名}`，服务名参考业务路由表）
-- 看代码确认日志格式，再查 CLS；不要凭空猜日志关键词。本地仓库代码入口在:/Users/user/mingh/workspace下
-- 子模块入口表格里的推荐查询只是通过代码锚点校验后的首查模板，不是唯一真相。若在子模块未定位到代码锚点, 需要提问用户来获取更详细的信息,直到能定位到代码入口
+- 每次会话首次执行**代码锚点**校验前，按 `references/update-master-branch.md` 更新对应服务仓库的 master 分支（路径：`/Users/user/mingh/workspace/{服务名}`，服务名参考上面`日志服务名和项目名映射关系表`）
+- 分析要查的数据是否在子模块的流程追踪入口，是的话可以通过日志锚点查询，不是的话分析本地项目路径，确认查询`sql`,服务名参考上面`日志服务名和项目名映射关系表`；子模块入口表格里的推荐查询只是通过代码锚点校验后的首查模板，不是唯一真相。
 - 执行入口表格推荐查询前，先校验 `方法入口`、`serviceName` 和固定 `message` 片段是否仍能和当前代码匹配；可用 `tools/validate_query_anchors.py` 辅助检查。
 - 标识符值优先直接放入 `message:\"{value}\"`，禁止加 `cid:`、`orderId:`、`contractNo:`
 - 日志查询sql中如果包含中文, 查询不要直接放入 `queryBase64`。使用注入方案：先用 ASCII queryBase64 URL 加载页面，再通过 contenteditable + `execCommand('insertText')` + `String.fromCharCode()` 注入中文查询（详见 `references/cls-react-contenteditable-injection.md`）
@@ -27,10 +43,29 @@ metadata:
 
   | key | 包含的值 | 说明 |
   |----|----|----|
-  | **serviceName** | `order`,`order-batch`,`order-batch-timing`,`h5-loan,protocol`,`protocol-batch`,`protocol-batch-timing`,`account`,`cif`,`datainquiry`,`loki-webapp` | 服务名,日志查询sql拼装条件之一,如:serviceName:"order"
+  | **serviceName** | 参考上面`日志服务名和项目名映射关系表` | 服务名,日志查询sql拼装条件之一,如:serviceName:"order"
   | **level** | `INFO`,`ERROR`,`WARN`,`DEBUG` | 日志级别,异常查询时常用 `ERROR` 级别 |
   | **env** | `prod`,`uat`,`test1`,`test2`,`test3`,`test4`,`test5`,`test6`,`test7`,`test8`,`test9`,`test10`,`test11`  | 用户不指定时默认使用`prod`，如果查测试环境,若用户未指定查哪个`test`环境, 默认不加该条件,指定后格式：`env:\"{value}\"`  |
   | **traceId** | 格式: 数字，字母，字母+数字组合 | 通常用户输入或者根据其它条件能确认`tractId`时。注意：根据`traceId`查询时一般不拼接其它查询条件 |
+
+### 推荐查询锚点校验
+
+各子业务模块的`流程追踪入口`：`场景 | 方法入口 | 日志锚点/关键词 | 推荐查询 | 说明`。
+
+- `方法入口` 存在且 `serviceName` 与源码项目匹配、固定 `message:\"...\"` 片段仍在该入口类/方法附近命中时，才把推荐查询作为 Phase A 主查询。
+- 方法存在但固定 message 不匹配时，不要把旧模板当主路径；改用 `serviceName:\"{服务}\" AND message:\"{标识符}\"`，并 grep 当前代码找新日志前缀。
+- 方法不存在、源码缺失或服务不匹配时，标记模板疑似过期；先按 traceId/标识符值搜，再回代码确认入口。
+- 推荐查询 0 命中时，继续扩大时间做值搜，如果能搜到日志，说明`sql`没问题，在目标查询时间段没有命中；当扩大到当前时间前一个月还没日志信息时，停止搜索，去本地项目内
+ 
+### 日志查询无结果排查清单
+
+查询返回 0 条时，**不要立即归因于查询语法**。按顺序排查：
+
+1. **时间窗口** — `now-1d,now` 是否真的覆盖了日志产生时间？扩大至 `now-7d,now` 或 `now-30d,now` 验证，能查到日志，说明`sql`语法没问题；扩大到`now-30d,now`仍然查不到时，进行第2步校验
+2. **topic 是否正确** — CLS hide* params 可能导致 topic 随机丢失，确认 topic_id 无误
+3. **分页未加载完** — CLS 每页只显示 20 条，`load_more_clicks` 是否足够？检查 `log_count` 字段
+4. **`=` 等号查询退化** — 如果查询含 `message:\"字段=值\"` 且 `log_count` 显示为 topic 总量（数百万级），说明 CLS 退化为全量返回。加 `AND level:\"WARN\"/\"INFO\"` 等额外约束可恢复精确过滤。此时应以实际加载出的日志内容为准
+7. **最后才怀疑语法** — 大部分**语法问题**是时间窗口或分页导致的，此时需要将查询`sql`本地项目做关联，确认日志是否过期，若日志过期提醒用户更新
 
 ### 浏览器和 CLS
 
@@ -38,7 +73,7 @@ metadata:
 - 禁止默认操作 `active tab of front window`。首次查询创建新的 Chrome window，后续查询复用该窗口，通过 window id 定向操作。发送飞书卡片后调用 `tools/cls_query.py --close` 关闭窗口。若页面跳转到 argus.xhdev.xyz 登录页，提示用户在 Chrome 中完成登录后重试。
 - 优先使用 `tools/cls_query.py` 构造 URL、打开专用窗口、加载更多、提取 `document.body.innerText`。
 - 不要用 `document.body.innerText.substring(0,N)` 判断结果；CLS 日志数据在页面文本后部。
-- `traceId` 查询也可能超过 20 条；必须加载更多直到按钮消失或达到合理上限。
+- `traceId` 查询也可能超过 20 条；必须加载全部数据进行解析
 - **分析前必须校验完整性**：对比 `log_count`（CLS 报告总数）与 `loaded_count`（实际加载数）。若 `is_complete` 为 false 或 `loaded_count` 远小于 `log_count`，禁止直接下结论。必须：(1) 继续加载更多（增大 `--max-load-more`），或 (2) 缩小查询范围分批查询，或 (3) 在飞书卡片中明确标注"基于 N/M 条采样分析，结论可能不完整"并使用黄色卡片。
 
 ### 飞书输出
@@ -47,27 +82,6 @@ metadata:
 - 卡片按钮 **URL** 必须包含 `topic_id`、`time`、`queryBase64`。
 - 非统计类查询（结果跨多个线程时除外），当查询结果集中在单个线程时，返回的飞书卡片必须带上 `traceId`，卡片 **URL** 只带 `traceId` 即可
 - 只有脚本执行失败时，才降级为 Markdown。
-
- 
-### ⚠️ 0 条结果排查清单
-
-查询返回 0 条时，**不要立即归因于查询语法**。按顺序排查：
-
-1. **时间窗口** — `now-1d,now` 是否真的覆盖了日志产生时间？扩大至 `now-7d,now` 或 `now-30d,now` 验证，能查到日志，说明`sql`语法没问题
-2. **topic 是否正确** — CLS hide* params 可能导致 topic 随机丢失，确认 topic_id 无误
-3. **分页未加载完** — CLS 每页只显示 20 条，`load_more_clicks` 是否足够？检查 `log_count` 字段
-4. **Chrome JS 权限** — AppleScript 报 `JavaScript 的功能已关闭` 时，Chrome 无法提取页面
-5. **`=` 等号查询退化** — 如果查询含 `message:\"字段=值\"` 且 `log_count` 显示为 topic 总量（数百万级），说明 CLS 退化为全量返回。加 `AND level:\"WARN\"/\"INFO\"` 等额外约束可恢复精确过滤。此时应以实际加载出的日志内容为准
-6. **最后才怀疑语法** — 大部分\"语法问题\"是时间窗口或分页导致的，此时需要将查询`sql`返回给用户，让用户协助确认查询`sql`是否存在问题，用户确认完毕后再进行查询
-
-### 推荐查询锚点校验
-
-入口表统一使用 `场景 | 方法入口 | 日志锚点/关键词 | 推荐查询 | 说明`。
-
-- `方法入口` 存在且 `serviceName` 与源码项目匹配、固定 `message:\"...\"` 片段仍在该入口类/方法附近命中时，才把推荐查询作为 Phase A 主查询。
-- 方法存在但固定 message 不匹配时，不要把旧模板当主路径；改用 `serviceName:\"{服务}\" AND message:\"{标识符}\"`，并 grep 当前代码找新日志前缀。
-- 方法不存在、源码缺失或服务不匹配时，标记模板疑似过期；先按 traceId/标识符值搜，再回代码确认入口。
-- 推荐查询 0 命中时，继续做值搜、扩大时间、跨服务和代码 grep，不直接下\"无日志\"结论。
 
 ## 意图分类
 
@@ -208,7 +222,7 @@ python3 /Users/user/.hermes/skills/xh-smart/xh-log-lookup/tools/send_feishu_card
 | `green` | 全部正常、全部 SUCCESS |
 | `blue` | 常规信息查询 |
 
-### ⛔ 输出前自检
+### 结果输出前自检
 
 当你准备在聊天中写出诊断结论、分析报告、根因判断时——**停下来**。这是你即将违反卡片规则的信号。把结论写进 `send_feishu_card.py` 的 `--data '{"analysis":"..."}'` 参数，不要写进聊天。
 
@@ -226,6 +240,7 @@ python3 /Users/user/.hermes/skills/xh-smart/xh-log-lookup/tools/send_feishu_card
 - 命中的日志摘要和未命中的关键证据
 - 结果是否完整：`loaded_count` vs `log_count`、`is_complete` 状态、是否受分页/时间范围限制。未完整加载时必须在卡片中标注
 - 飞书卡片是否发送成功；失败时说明降级链接
+- 内容中各个关键节点结论及时间，时间为`timestamp`格式
 
 ## References
 
@@ -238,4 +253,6 @@ python3 /Users/user/.hermes/skills/xh-smart/xh-log-lookup/tools/send_feishu_card
 - `references/feishu-card-template.md`：飞书卡片结构和按钮 URL 规则
 - `references/feishu-card-callback-handling.md`：飞书卡片按钮回调
 - `references/trace-dubbo-profile-filter.md`：Dubbo 全链路追踪（ProfileFilter CS/CR/SS/SR 标记解读 + 溯源方法论）
+- `references/cls-topic-field-reference.md`：CLS Topic 字段对照表（生产/测试环境 topic 属性与索引字段）
+- `references/efficient-query-pattern-20260517.md`：高效查询工作流（查询耗时优化、CLS 页面异常处理）
 - `references/cls-iframe-crossorigin-workflow.md`：历史废弃 iframe 方案，只作背景

@@ -227,3 +227,9 @@ order, account（合约/账务）, **H5LoanProject**（还款查询 API 入口�
 - **消息在源码内**（如"天后可发起"）→ `grep -r '关键词' /Users/user/mingh/workspace/ --include='*.java'`。消息可能不在 order 项目，需要在 H5LoanProject/loki 等其他项目搜索。
 - **消息由后端接口返回**（`ResultEnum` 枚举）→ 查 ResultEnum 定义或对应枚举值。
 - **消息由前端写死** → 不在此技能范围，确认后标记为前端静态文案。
+
+## References
+
+- `references/new-customer-early-repay-intercept.md`：新客提前结清拦截（新客提还拦截弹窗规则、`needWeakenSettle()` 代码位置）
+- `references/repay-calc-logic.md`：还款订单列表和逾期金额计算逻辑（`queryRepayOrderList` 入口）
+- `references/settled-period-tracing.md`：已结清期次追踪实战参考（account-swift-app-job 日切信号、出账确认）
