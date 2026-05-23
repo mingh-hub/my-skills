@@ -91,27 +91,18 @@ def parse_markdown_tables(text):
 
 
 def build_table_element(columns, rows):
-    col_defs = [
-        {"name": f"col_{i}", "display_name": h, "data_type": "text"}
-        for i, h in enumerate(columns)
-    ]
+    """Build V2 native table element. 
+    Column headers use display_name; internal keys are col_0, col_1, etc.
+    """
+    col_defs = [{"name": f"col_{i}", "display_name": h} for i, h in enumerate(columns)]
     row_datas = []
     for row in rows:
         entry = {}
         for i in range(len(columns)):
-            entry[f"col_{i}"] = row[i] if i < len(row) else ""
+            entry[f"col_{i}"] = str(row[i]) if i < len(row) else ""
         row_datas.append(entry)
     return {
         "tag": "table",
-        "page_size": max(len(row_datas), 5),
-        "row_height": "low",
-        "header_style": {
-            "text_align": "left",
-            "text_size": "normal",
-            "background_style": "grey",
-            "bold": True,
-            "lines": 1
-        },
         "columns": col_defs,
         "rows": row_datas
     }
@@ -120,11 +111,11 @@ def build_table_element(columns, rows):
 def build_rich_elements(text):
     segments = parse_markdown_tables(text)
     if len(segments) == 1 and segments[0][0] == "text":
-        return [{"tag": "markdown", "content": segments[0][1]}]
+        return [{"tag": "div", "text": {"tag": "lark_md", "content": segments[0][1]}}]
     elements = []
     for seg_type, seg_data in segments:
         if seg_type == "text":
-            elements.append({"tag": "markdown", "content": seg_data})
+            elements.append({"tag": "div", "text": {"tag": "lark_md", "content": seg_data}})
         else:
             elements.append(build_table_element(seg_data["columns"], seg_data["rows"]))
     return elements
@@ -213,11 +204,14 @@ def build_card(title, color, cls_url, cls_url_expanded, data):
             chain_lines.append(f"{icon} `{t}` **{svc}** {content}")
         if log_count > 20:
             chain_lines.append(f"\n... 共 **{log_count}** 条日志，仅展示最近 10 条")
-        elements.append({"tag": "markdown", "content": "\n".join(chain_lines)})
+        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": "\n".join(chain_lines)}})
     elif log_count == 0 and not summary_fields:
         elements.append({
-            "tag": "markdown",
-            "content": "**无匹配日志**\n\n可能原因：查询时间范围不对、serviceName 不匹配、或该请求未产生日志。"
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": "**无匹配日志**\n\n可能原因：查询时间范围不对、serviceName 不匹配、或该请求未产生日志。"
+            }
         })
 
     table_data = data.get("table_data", [])
@@ -233,29 +227,24 @@ def build_card(title, color, cls_url, cls_url_expanded, data):
         rich = build_rich_elements(f"**📋 分析结论:**\n{analysis}")
         elements.extend(rich)
 
-    actions = []
+    # V2: buttons → markdown links in a div
+    links = []
     if cls_url:
-        actions.append({
-            "tag": "button",
-            "text": {"tag": "plain_text", "content": "🔗 跳转链接"},
-            "type": "primary",
-            "url": cls_url
-        })
+        links.append(f"[🔗 跳转链接]({cls_url})")
     if cls_url_expanded:
-        actions.append({
-            "tag": "button",
-            "text": {"tag": "plain_text", "content": "⏱ 扩大查询范围"},
-            "type": "default",
-            "url": cls_url_expanded
-        })
-    if actions:
+        links.append(f"[⏱ 扩大查询范围]({cls_url_expanded})")
+    if links:
         elements.append({"tag": "hr"})
-        elements.append({"tag": "action", "actions": actions})
+        elements.append({
+            "tag": "div",
+            "text": {"tag": "lark_md", "content": " · ".join(links)}
+        })
 
+    # V2: note → div with small footer text
     note_text = f"🕐 共查询到 {log_count} 条日志 | {time.strftime('%H:%M')}"
     elements.append({
-        "tag": "note",
-        "elements": [{"tag": "plain_text", "content": note_text}]
+        "tag": "div",
+        "text": {"tag": "lark_md", "content": f"_{note_text}_"}
     })
 
     card = {
@@ -276,7 +265,7 @@ def send_card(chat_id, card):
     payload = {
         "receive_id": chat_id,
         "msg_type": "interactive",
-        "content": json.dumps({"type": "card_json", "data": card}, ensure_ascii=False)
+        "content": json.dumps(card, ensure_ascii=False)
     }
 
     try:
