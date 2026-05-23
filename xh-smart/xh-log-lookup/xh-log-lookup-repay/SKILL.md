@@ -19,7 +19,7 @@ metadata:
 
 **排查陷阱**: 用户反馈的还款页面提示信息（拦截弹窗、不能还款原因）可能来自 H5LoanProject 的 `RepayController.queryRepayOrderInfo()`，不是 order 服务的返回。查不到 order 日志不代表没有拦截——先搜 H5LoanProject 源码确认消息来源。
 
-## 入口覆盖表 + 查询模板
+## 核心流程链路追踪模版
 
 > Phase A 查询统一前缀: `serviceName:"order" AND ...`（还款逻辑也在 order 服务中）
 

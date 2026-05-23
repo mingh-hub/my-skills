@@ -15,7 +15,7 @@ metadata:
 
 member, rubick, benefit, activity, order (CouponService), h5-loan (SelfLoanProcessStrategy)
 
-## 入口覆盖表 + 查询模板
+## 核心流程链路追踪模版
 
 > 权益模块跨多个服务，注意 serviceName 按实际项目切换。
 

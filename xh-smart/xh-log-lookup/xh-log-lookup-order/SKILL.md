@@ -11,19 +11,11 @@ metadata:
 
 # 订单日志查询
 
-订单模块子 Skill 只提供入口、首查策略和关键失败模式。CLS 执行、加载更多、飞书卡片输出统一交给 `xh-log-lookup` 主控工具。
-
-## 意图分类
-
-| 意图 | 识别特征 | 查询策略 | 禁止操作 |
-|------|---------|---------|---------|
-| 流程追踪 | 下单成功、下单失败、下单拦截、风控反欺诈... | 使用入口日志加客户输入信息(如客户id(`cid`，`userId`)，手机号(`mobilePhone`，`mobileNo`)，订单号(orderId))定位 traceId，再查全链路 | - |
-| 健康检查 | 按提示时间查看INFO、ERROR、WARN日志情况，没有时间默认近一天 | 使用健康检查 reference 的 Step 0→A→B→C→D | - |
-| **异常告警** | 异常告警情况、ERROR告警、近1小时异常 | 先用 `level:"ERROR"` 捕获系统异常，再结合`LoanOrderResult`对象中字段`success`的值为`false`捕获业务异常 |
+订单模块子 Skill 只提供`首查策略`、`核心流程追踪入口`、`关键失败场景`、`健康检查`。CLS 执行、加载更多、飞书卡片输出统一交给 `xh-log-lookup` 主控工具。
 
 ## 涉及服务
 
-主服务：`order`。
+主服务：`order，order-batch，order-batch-timing`。
 
 常见关联服务：`h5-loan`、`loki-webapp`、`datainquiry`、`cif`、`account`、`underwriter`、`magic`、`member`。
 
@@ -31,24 +23,18 @@ metadata:
 
 | 用户提供 | 推荐首查语句 | 说明 |
 |---------|-------------|------|
-| `traceId` / `线程号` | `traceId:"{value}"` | 直接全链路，不加 `serviceName` |
-| `orderId` / `订单号` | `serviceName:"order" AND message:"{value}"` | 值搜，不加 `orderId:` 前缀 |
-| `cid` / `客户id` | `serviceName:"order" AND message:"{value}"` | 值搜，不加 `cid:` 前缀 |
-| `contractNo` / `合同号` | `serviceName:"order" AND message:"{value}"` | 值搜，不加 `contractNo:` 前缀 |
-| `mobilePhone` / `手机号` | 根据手机号定位 `cid`/`orderId` | 找不到时扩大查询时间`now-7d,now` |
-| `identityNo` / `身份证号` | 根据身份证号定位 `cid`/`orderId` | 找不到时问用户补充 `cid`/`orderId` |
+| 线程号：`traceId` | `traceId:"{value}"` | 值搜，全链路查询，不加 `serviceName` |
+| 订单号：`orderId` | `serviceName:"order" AND message:"{value}"` | 值搜 |
+| 客户id：`cid`，`userId`，`customerId` | `serviceName:"order" AND message:"{value}"` | 值搜 |
+| 合同号：`contractNo` | `serviceName:"order" AND message:"{value}"` | 值搜 |
+| 手机号：`mobilePhone，mobileNo` | 根据手机号定位 `cid`、`orderId`后再根据`cid`或者`orderId`来搜 | 找不到时扩大查询时间`now-7d,now`->`now-30d,now` |
+| 身份证号：`identityNo` | 根据身份证号定位 `cid`、`orderId`后再根据`cid`或者`orderId`来搜 | 找不到时扩大查询时间`now-7d,now`->`now-30d,now` |
 
-手机号、身份证号查询可能无法查到准确信息，可以通过日志查询将手机号、身份证号转成客户`cid`再查；
-日志中同一个值可能以 `cid`、`customerId`、`userId`、对象 `toString()` 等形式出现；直接搜值召回率最高。
-
-## 流程追踪入口
-
-Phase A 查询统一使用 `serviceName:"order" AND ...` 定位 `traceId` 
-Phase B 用 `traceId:"{traceId}"` 查全链路。
+## 核心流程链路追踪模版
 
 | 场景 | 方法入口 | 日志锚点/关键词 | 推荐查询 | 关键指标 | 说明 |
 |------|----------|----------------|----------|----------|------|
-| 下单请求 | `com.xhqb.order.biz.service.impl.loan.LoanServiceImpl#loanOrder` | `[借款下单]下单请求为` | `serviceName:"order" AND message:"[借款下单]下单请求为" AND message:"{value}"` | | 校验通过后作为 Phase A 入口。相关 WARN 锚点：`[借款下单]出现并发请求`（Redis 锁拦截）、`[借款下单]请求参数有误`，业务模式通过入参字段`loanSourceEnum`来区分，`API：api借款流程，SELF_SUPPORT：自营借款流程` |
+| 下单请求 | `com.xhqb.order.biz.service.impl.loan.LoanServiceImpl#loanOrder` | `[借款下单]下单请求为` | `serviceName:"order" AND message:"[借款下单]下单请求为" AND message:"{value}"` | | 校验通过后作为首查入口。相关 WARN 锚点：`[借款下单]出现并发请求`（Redis 锁拦截）、`[借款下单]请求参数有误`，业务模式通过入参字段`loanSourceEnum`来区分，`API：api借款流程，SELF_SUPPORT：自营借款流程` |
 | 下单核心 | `com.xhqb.order.biz.service.impl.loan.LoanTemplate#loan` | - | - | | **下单核心流程总控，包含流程：`下单拦截`、``、``、``、``** |
 | 下单拦截 | `com.xhqb.order.biz.service.impl.loan.LoanServiceImpl#loanCheck` | `[借款校验]进入` | `serviceName:order AND message:"[借款校验]进入"` | | **下单核心流程之一** |
 | 下单拦截结果 | `com.xhqb.order.biz.service.impl.loan.LoanTemplate#loan` | `[借款下单]下单拦截请求` | `serviceName:order AND message:"[借款下单]下单拦截请求"` | | 区分下单拦截结果，`intercept=false`：未拦截；`intercept=true`：拦截，`interceptFilter`：拦截器，`interceptMessage`：拦截原因，`errorCode`：下单失败code |
@@ -81,19 +67,19 @@ Phase B 用 `traceId:"{traceId}"` 查全链路。
 
 ## 健康检查
 
-无具体标识符时，按 Step 0→A→B→C→D。**Step 0 是"异常告警"查询的必做步骤**，常规健康检查也建议先执行 Step 0 排除非 [借款下单] 类异常。
+无具体标识符时，按 `Step 1→2→3→4→5`。**Step 0 是"异常告警"查询的必做步骤**，常规健康检查也建议先执行 Step 0 排除非 [借款下单] 类异常。
 
 Step 0 使用 `level:"ERROR"` 通用查询，不依赖代码锚点，可直接执行。Step A/B/C 的中文日志前缀（`[借款下单]下单请求为` 等）依赖代码，首次使用前必须用 `validate_query_anchors.py` 或 grep 本地代码确认锚点仍存在。
 
 | Step | 查询sql | 说明 |
 |------|------|------|
-| step1：借款下单异常总览 | `serviceName:"order" AND (message:"[借款下单]出现系统错误" OR message:"[借款下单]请求出现业务异常")` | 包含`业务异常`和`系统异常` |
-| A 入口量 | `serviceName:"order" AND message:"[借款下单]下单请求为"` | 中文查询，需要浏览器注入 |
-| B 结果状态 | `serviceName:"order" AND message:"[借款下单]下单请求结果为"` | 中文查询，需要浏览器注入 |
-| C 异常 | `serviceName:"order" AND (message:"[借款下单]出现系统错误" OR message:"[借款下单]请求出现业务异常")` | 中文查询，需要浏览器注入 |
-| D 钻取 | `traceId:"{提取到的hex值}"` | 从 Step 0/C 中提取异常 traceId 展开分析 |
+| `Step1`：借款下单异常总览 | `serviceName:"order" AND (message:"[借款下单]出现系统错误" OR message:"[借款下单]请求出现业务异常")` | 包含`业务异常`和`系统异常` |
+| `Step2`：入口量 | `serviceName:"order" AND message:"[借款下单]下单请求为"` | 中文查询，需要浏览器注入 |
+| `Step3`：结果状态 | `serviceName:"order" AND message:"[借款下单]下单请求结果为"` | 中文查询，需要浏览器注入 |
+| `Step4`：异常 | `serviceName:"order" AND (message:"[借款下单]出现系统错误" OR message:"[借款下单]请求出现业务异常")` | 中文查询，需要浏览器注入 |
+| `Step5`：钻取 | `traceId:"{提取到的hex值}"` | 从 Step 0/C 中提取异常 traceId 展开分析 |
 
-输出统计：请求总数、成功数、成功金额、**非下单类ERROR（Step 0）**、业务异常、系统错误、渠道分布、异常 traceId。
+输出统计：请求总数、成功数、成功金额、业务异常、系统异常、渠道分布、异常 traceId。
 
 ## References
 

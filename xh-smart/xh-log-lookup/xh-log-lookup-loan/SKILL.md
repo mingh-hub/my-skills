@@ -15,7 +15,7 @@ metadata:
 
 order (OrderRouteService, LoanOrderServiceImpl, ReleaseHoldOrderServiceImpl), loki
 
-## 入口覆盖表 + 查询模板
+## 核心流程链路追踪模版
 
 | 场景 | 方法入口 | 日志锚点/关键词 | 推荐查询 | 关键指标 | 说明 |
 |------|----------|----------------|----------|----------|------|

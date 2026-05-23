@@ -37,7 +37,7 @@ metadata:
 
 手机号和身份证号属于定位入口，不是最终诊断证据；查到关联 cid/orderId/contractNo 后，必须继续用稳定标识符追签约链路。
 
-## 入口关键词
+## 核心流程链路追踪模版
 
 推荐查询执行前先用 `方法入口` 校验代码锚点；不匹配时降级到 `serviceName:"order" AND message:"{标识符}"` 并重新 grep 当前代码。
 
