@@ -39,14 +39,7 @@ metadata:
 - 执行入口表格推荐查询前，先校验 `方法入口`、`serviceName` 和固定 `message` 片段是否仍能和当前代码匹配；可用 `tools/validate_query_anchors.py` 辅助检查。
 - 标识符值优先直接放入 `message:\"{value}\"`，禁止加 `cid:`、`orderId:`、`contractNo:`
 - 日志查询sql中如果包含中文, 查询不要直接放入 `queryBase64`。使用注入方案：先用 ASCII queryBase64 URL 加载页面，再通过 contenteditable + `execCommand('insertText')` + `String.fromCharCode()` 注入中文查询（详见 `references/cls-react-contenteditable-injection.md`）
-- 日志平台查询常用key:
-
-  | key | 包含的值 | 说明 |
-  |----|----|----|
-  | **serviceName** | 参考上面`日志服务名和项目名映射关系表` | 服务名,日志查询sql拼装条件之一,如:serviceName:"order"
-  | **level** | `INFO`,`ERROR`,`WARN`,`DEBUG` | 日志级别,异常查询时常用 `ERROR` 级别 |
-  | **env** | `prod`,`uat`,`test1`,`test2`,`test3`,`test4`,`test5`,`test6`,`test7`,`test8`,`test9`,`test10`,`test11`  | 用户不指定时默认使用`prod`，如果查测试环境,若用户未指定查哪个`test`环境, 默认不加该条件,指定后格式：`env:\"{value}\"`  |
-  | **traceId** | 格式: 数字，字母，字母+数字组合 | 通常用户输入或者根据其它条件能确认`tractId`时。注意：根据`traceId`查询时一般不拼接其它查询条件 |
+- 日志平台查询常用 key 见下文"查询语法与字段"段。
 
 ### 推荐查询锚点校验
 
@@ -65,7 +58,7 @@ metadata:
 2. **topic 是否正确** — CLS hide* params 可能导致 topic 随机丢失，确认 topic_id 无误
 3. **分页未加载完** — CLS 每页只显示 20 条，`load_more_clicks` 是否足够？检查 `log_count` 字段
 4. **`=` 等号查询退化** — 如果查询含 `message:\"字段=值\"` 且 `log_count` 显示为 topic 总量（数百万级），说明 CLS 退化为全量返回。加 `AND level:\"WARN\"/\"INFO\"` 等额外约束可恢复精确过滤。此时应以实际加载出的日志内容为准
-7. **最后才怀疑语法** — 大部分**语法问题**是时间窗口或分页导致的，此时需要将查询`sql`本地项目做关联，确认日志是否过期，若日志过期提醒用户更新
+5. **最后才怀疑语法** — 大部分**语法问题**是时间窗口或分页导致的，此时需要将查询`sql`本地项目做关联，确认日志是否过期，若日志过期提醒用户更新
 
 ### 浏览器和 CLS
 
@@ -76,12 +69,11 @@ metadata:
 - `traceId` 查询也可能超过 20 条；必须加载全部数据进行解析
 - **分析前必须校验完整性**：对比 `log_count`（CLS 报告总数）与 `loaded_count`（实际加载数）。若 `is_complete` 为 false 或 `loaded_count` 远小于 `log_count`，禁止直接下结论。必须：(1) 继续加载更多（增大 `--max-load-more`），或 (2) 缩小查询范围分批查询，或 (3) 在飞书卡片中明确标注"基于 N/M 条采样分析，结论可能不完整"并使用黄色卡片。
 
-### 飞书输出
+### 飞书输出与结论规则
 
-- 初始查询结果、跟进追查结果、根因分析、深度钻取结果和分析结论必须通过 `tools/send_feishu_card.py` 发送飞书交互式卡片。
-- 卡片按钮 **URL** 必须包含 `topic_id`、`time`、`queryBase64`。
-- 非统计类查询（结果跨多个线程时除外），当查询结果集中在单个线程时，返回的飞书卡片必须带上 `traceId`，卡片 **URL** 只带 `traceId` 即可
-- 只有脚本执行失败时，才降级为 Markdown。
+- 所有诊断结论、分析报告必须通过 `tools/send_feishu_card.py` 发送飞书卡片，禁止直接写进聊天。只有脚本执行失败时才降级为 Markdown。
+- 卡片 **URL** 必须包含 `topic_id`、`time`、`queryBase64`；当结果集中在单线程时，URL 只带 `traceId` 即可。
+- 每次结论须包含：查了什么代码/日志前缀、CLS 查询语句/topic/时间范围、命中摘要与未命中证据、完整性状态（`loaded_count` vs `log_count`）、关键节点时间（`timestamp` 格式）、卡片发送状态。
 
 ## 意图分类
 
@@ -105,17 +97,11 @@ metadata:
 
 ## 标准工作流
 
-1. 理解问题，提取环境、时间范围、标识符和业务模块。
-2. 分类意图：流程追踪、健康检查或 SSO。
-3. 路由到对应业务子 Skill，读取其入口日志、失败模式和 reference 指引。
-4. 对入口表推荐查询做代码锚点校验；不匹配时降级到标识符值搜并 grep 代码确认真实日志前缀、logger 和字段。
-5. 组装 CLS 查询语句，使用 `tools/cls_query.py` 查询并提取全文。
-6. 推荐查询 0 命中时，按\"值搜 → 扩大时间 → 去掉 serviceName 跨服务 → 再 grep 当前代码\"的顺序回退。
-7. **校验日志完整性**：确认 `is_complete` 为 true 且 `loaded_count` 接近 `log_count`。未加载完时，继续加载或在后续卡片中标注为采样分析。
-8. 分析日志，说明命中、未命中、topic、时间范围和查询限制。
-9. 使用 `tools/send_feishu_card.py` 发送卡片。
-10. 如查询不完整，发黄色卡片并给出下一步需要的标识符或更大时间范围。
-11. 飞书卡片发送成功后，调用 `cls_query.py --close` 关闭 CLS 浏览器窗口。
+1. 提取环境、时间范围、标识符 → 分类意图 → 路由到业务子 Skill。
+2. 代码锚点校验（规则见上文"推荐查询锚点校验"），组装 CLS 查询。
+3. `tools/cls_query.py` 查询并提取全文，校验完整性（`loaded_count` vs `log_count`）。
+4. 0 命中时按"无结果排查清单"回退。
+5. 分析日志 → `tools/send_feishu_card.py` 发卡片 → `cls_query.py --close` 关窗口。
 
 ## CLS 工具
 
@@ -149,68 +135,44 @@ python3 /Users/user/.hermes/skills/xh-smart/xh-log-lookup/tools/cls_query.py \
 
 ### 中文查询注入
 
-若需要中文查询（如 `[借款下单]下单请求为`），queryBase64 不支持非 ASCII。使用注入方案：
-
-1. 先用 ASCII 查询使 CLS 页面加载、contenteditable 渲染
-2. 通过 AppleScript 执行 JS，用 `String.fromCharCode()` 构造中文字符串并用 `execCommand('insertText')` 注入到 contenteditable div
-3. 显式点击搜索按钮（带 SVG 图标的 button）
-4. 等待 10-15s 后提取页面文本
-
-详细步骤和代码示例见 `references/cls-react-contenteditable-injection.md`。
+queryBase64 不支持非 ASCII。中文查询需先用 ASCII URL 加载页面，再通过 AppleScript + `String.fromCharCode()` + `execCommand('insertText')` 注入。详见 `references/cls-react-contenteditable-injection.md`。
 
 ### 校验入口表锚点
 
 ```bash
-# 一键汇总全部子模块锚点有效性
 python3 /Users/user/.hermes/skills/xh-smart/xh-log-lookup/tools/validate_query_anchors.py \
   --all --summary
-
-# 校验单个子模块（详细输出）
-python3 /Users/user/.hermes/skills/xh-smart/xh-log-lookup/tools/validate_query_anchors.py \
-  --skill /Users/user/.hermes/skills/xh-smart/xh-log-lookup/xh-log-lookup-order/SKILL.md \
-  --source-root /Users/user/mingh/workspace/order
 ```
 
-`--all` 自动发现所有 `xh-log-lookup-*/SKILL.md` 子模块，`--summary` 输出精简汇总表（Y/N 有效性 + 无效原因）。校验不通过时，推荐查询只能作为历史线索，不能作为主查询。
+`--all` 自动发现所有子模块，`--summary` 输出汇总表。校验不通过时，推荐查询只能作为历史线索。
 
-## CLS 环境
+## CLS 环境与查询语法
 
-| 环境 | topic_id | UI 显示名 | 默认时间 |
-|------|----------|----------|----------|
-| 生产 | `f6748b3a-8ab8-4191-b848-cb90b1598901` | `logsvr-prod` | `now-7d,now` |
-| 测试 | `1f92a7ca-cf46-4f4f-92dd-72c5df5910dc` | `logsvr-test-标准+低频` | `now-1d,now` |
+| 环境 | topic_id | 默认时间 |
+|------|----------|----------|
+| 生产 | `f6748b3a-8ab8-4191-b848-cb90b1598901` | `now-7d,now` |
+| 测试 | `1f92a7ca-cf46-4f4f-92dd-72c5df5910dc` | `now-1d,now` |
 
-CLS URL 格式：
+URL: `https://datasight-1300455117.internal.clsconsole.tencent-cloud.com/cls/search?region=ap-beijing&topic_id={topic_id}&time={start},{end}&queryBase64={base64_query}`
 
-```text
-https://datasight-1300455117.internal.clsconsole.tencent-cloud.com/cls/search?region=ap-beijing&topic_id={topic_id}&time={start},{end}&queryBase64={base64_query}
-```
+语法：`field:"value"` + `AND` / `OR`，所有字段值统一加引号。
 
-## 查询语法
-
-```text
-字段匹配: field:"value"         -- 所有字段统一加引号（serviceName、traceId、level 等）
-与条件:   AND
-或条件:   OR
-```
-
-**⚠️ 注意：** 所有字段值统一加引号（`level:\"ERROR\"`、`serviceName:\"order\"`），保持风格一致。0 命中时优先排查时间窗口是否太窄，而非怀疑语法。
-
-索引字段：`traceId`、`serviceName`、`level`、`requestId`。
-
-非索引字段必须通过 `message` 全文搜索：`orderId`、`cid`、`contractNo`、logger 名称等。
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| **serviceName** | 索引 | 参考上面映射表，如 `serviceName:"order"` |
+| **level** | 索引 | `INFO`/`ERROR`/`WARN`/`DEBUG` |
+| **traceId** | 索引 | 按 traceId 查时一般不拼其它条件 |
+| **requestId** | 索引 | |
+| **env** | 非索引 | 默认 `prod`；测试环境未指定具体 test 编号时不加此条件 |
+| **message** | 全文 | orderId、cid、contractNo 等非索引字段通过 message 搜索 |
 
 ## 飞书卡片
 
-使用：
-
 ```bash
-python3 /Users/user/.hermes/skills/xh-smart/xh-log-lookup/tools/send_feishu_card.py \
-  --title "✅ 场景简述 · 05-18 00:00~23:59" \
-  --color green \
-  --cls-url "{cls_url}" \
-  --cls-url-expanded "{expanded_url}" \
-  --data '{"summary_fields":[{"label":"查询对象","value":"..."},{"label":"环境","value":"生产 logsvr-prod"},{"label":"命中日志","value":"N 条"},{"label":"诊断结论","value":"..."}],"analysis":"详细分析文本","log_count":0}'
+python3 tools/send_feishu_card.py \
+  --title "[emoji] 场景简述 · 时间范围" --color green \
+  --cls-url "{cls_url}" --cls-url-expanded "{expanded_url}" \
+  --data '{"summary_fields":[...],"analysis":"...","log_count":N}'
 ```
 
 颜色：
@@ -224,23 +186,7 @@ python3 /Users/user/.hermes/skills/xh-smart/xh-log-lookup/tools/send_feishu_card
 
 ### 结果输出前自检
 
-当你准备在聊天中写出诊断结论、分析报告、根因判断时——**停下来**。这是你即将违反卡片规则的信号。把结论写进 `send_feishu_card.py` 的 `--data '{"analysis":"..."}'` 参数，不要写进聊天。
-
-常见触发场景：
-- 调试了很久终于搞清楚了，急着把结论说出来
-- CLS 提取遇到困难，改用手动分析后直接口述
-- 用户追问，你觉得"先快速回答再补卡片"
-
-## 输出要求
-
-每次结论必须说明：
-
-- 查了什么代码、找到了哪些日志前缀或 logger
-- CLS 查询语句、topic、时间范围
-- 命中的日志摘要和未命中的关键证据
-- 结果是否完整：`loaded_count` vs `log_count`、`is_complete` 状态、是否受分页/时间范围限制。未完整加载时必须在卡片中标注
-- 飞书卡片是否发送成功；失败时说明降级链接
-- 内容中各个关键节点结论及时间，时间为`timestamp`格式
+当你准备在聊天中写出诊断结论时——**停下来**，把结论写进 `send_feishu_card.py` 的 `--data '{"analysis":"..."}'`，不要写进聊天。
 
 ## References
 
