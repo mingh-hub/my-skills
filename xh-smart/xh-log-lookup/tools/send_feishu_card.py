@@ -122,17 +122,18 @@ def build_card(title, color, cls_url, cls_url_expanded, data):
 
     summary_fields = data.get("summary_fields", [])
     if summary_fields:
-        fields = []
+        col_left, col_right = [], []
         for item in summary_fields:
-            fields.append({
-                "is_short": True,
-                "text": {"tag": "markdown", "content": f"**{item['label']}**"}
-            })
-            fields.append({
-                "is_short": True,
-                "text": {"tag": "markdown", "content": item["value"]}
-            })
-        elements.append({"tag": "div", "fields": fields})
+            col_left.append({"tag": "markdown", "content": f"**{item['label']}**"})
+            col_right.append({"tag": "markdown", "content": item["value"]})
+        elements.append({
+            "tag": "column_set",
+            "flex_mode": "none",
+            "columns": [
+                {"tag": "column", "width": "weighted", "weight": 1, "elements": col_left},
+                {"tag": "column", "width": "weighted", "weight": 1, "elements": col_right}
+            ]
+        })
         elements.append({"tag": "hr"})
 
     call_chain = data.get("call_chain", [])
@@ -149,20 +150,17 @@ def build_card(title, color, cls_url, cls_url_expanded, data):
             chain_lines.append(f"{icon} `{t}` **{svc}** {content}")
         if log_count > 20:
             chain_lines.append(f"\n... 共 **{log_count}** 条日志，仅展示最近 10 条")
-        elements.append({"tag": "div", "text": {"tag": "markdown", "content": "\n".join(chain_lines)}})
+        elements.append({"tag": "markdown", "content": "\n".join(chain_lines)})
     elif log_count == 0 and not summary_fields:
         elements.append({
-            "tag": "div",
-            "text": {"tag": "markdown", "content": "**无匹配日志**\n\n可能原因：查询时间范围不对、serviceName 不匹配、或该请求未产生日志。"}
+            "tag": "markdown",
+            "content": "**无匹配日志**\n\n可能原因：查询时间范围不对、serviceName 不匹配、或该请求未产生日志。"
         })
 
     analysis = data.get("analysis", "")
     if analysis:
         elements.append({"tag": "hr"})
-        elements.append({
-            "tag": "div",
-            "text": {"tag": "markdown", "content": f"**📋 分析结论:**\n{analysis}"}
-        })
+        elements.append({"tag": "markdown", "content": f"**📋 分析结论:**\n{analysis}"})
 
     actions = []
     if cls_url:
@@ -190,12 +188,14 @@ def build_card(title, color, cls_url, cls_url_expanded, data):
     })
 
     card = {
-        "config": {"wide_screen_mode": True},
+        "schema": "2.0",
         "header": {
             "title": {"tag": "plain_text", "content": title},
             "template": COLOR_MAP.get(color, "blue")
         },
-        "elements": elements
+        "body": {
+            "elements": elements
+        }
     }
     return card
 
@@ -205,7 +205,7 @@ def send_card(chat_id, card):
     payload = {
         "receive_id": chat_id,
         "msg_type": "interactive",
-        "content": json.dumps(card, ensure_ascii=False)
+        "content": json.dumps({"type": "card_json", "data": card}, ensure_ascii=False)
     }
 
     try:
