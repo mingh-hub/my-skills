@@ -25,7 +25,7 @@ metadata:
 - 日志查询sql中如果包含中文, 查询不要直接放入 `queryBase64`。使用注入方案：先用 ASCII queryBase64 URL 加载页面，再通过 contenteditable + `execCommand('insertText')` + `String.fromCharCode()` 注入中文查询（详见 `references/cls-react-contenteditable-injection.md`）
 - 日志平台查询常用key:
 
-  | ***key*** | ***包含的值*** | ***说明*** |
+  | key | 包含的值 | 说明 |
   |----|----|----|
   | **serviceName** | `order`,`order-batch`,`order-batch-timing`,`h5-loan,protocol`,`protocol-batch`,`protocol-batch-timing`,`account`,`cif`,`datainquiry`,`loki-webapp` | 服务名,日志查询sql拼装条件之一,如:serviceName:"order"
   | **level** | `INFO`,`ERROR`,`WARN`,`DEBUG` | 日志级别,异常查询时常用 `ERROR` 级别 |
@@ -229,7 +229,7 @@ python3 /Users/user/.hermes/skills/xh-smart/xh-log-lookup/tools/send_feishu_card
 
 ## References
 
-- `references/update-master-branch.md`：更新 `master` 分支代码
+- `references/update-master-branch.md`：更新本地 `master` 分支代码
 - `references/cls-local-chrome-access.md`：本地 Chrome 专用窗口访问 CLS
 - `references/cls-dom-extraction.md`：全文提取、加载更多、CK/CS 合同号解析
 - `references/cls-query-pitfalls.md`：CLS 高频坑和恢复方式

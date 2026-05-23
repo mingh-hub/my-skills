@@ -31,36 +31,39 @@ metadata:
 
 | 用户提供 | 推荐首查语句 | 说明 |
 |---------|-------------|------|
-| `traceId` / 线程号 | `traceId:"{value}"` | 直接全链路，不加 `serviceName` |
-| `orderId` | `serviceName:"order" AND message:"{value}"` | 值搜，不加 `orderId:` 前缀 |
-| `cid` | `serviceName:"order" AND message:"{value}"` | 值搜，不加 `cid:` 前缀 |
-| `contractNo` | `serviceName:"order" AND message:"{value}"` | 值搜，不加 `contractNo:` 前缀 |
-| `mobilePhone` | 先搜手机号定位 `cid`/`orderId` | 找不到时问用户补充 `cid`/`orderId` |
-| `identityNo` | 先搜身份证号定位 `cid`/`orderId` | 找不到时问用户补充 `cid`/`orderId` |
+| `traceId` / `线程号` | `traceId:"{value}"` | 直接全链路，不加 `serviceName` |
+| `orderId` / `订单号` | `serviceName:"order" AND message:"{value}"` | 值搜，不加 `orderId:` 前缀 |
+| `cid` / `客户id` | `serviceName:"order" AND message:"{value}"` | 值搜，不加 `cid:` 前缀 |
+| `contractNo` / `合同号` | `serviceName:"order" AND message:"{value}"` | 值搜，不加 `contractNo:` 前缀 |
+| `mobilePhone` / `手机号` | 根据手机号定位 `cid`/`orderId` | 找不到时问用户补充 `cid`/`orderId` |
+| `identityNo` / `身份证号` | 根据身份证号定位 `cid`/`orderId` | 找不到时问用户补充 `cid`/`orderId` |
 
-手机号、身份证号查询可能无法查到准确信息，可以通过日志查询将手机号、身份证号转成客户`cid`再查
+手机号、身份证号查询可能无法查到准确信息，可以通过日志查询将手机号、身份证号转成客户`cid`再查；
 日志中同一个值可能以 `cid`、`customerId`、`userId`、对象 `toString()` 等形式出现；直接搜值召回率最高。
 
-## 流程追踪入口覆盖
+## 流程追踪入口
 
-Phase A 查询统一使用 `serviceName:"order" AND ...`定位 `traceId` 
+Phase A 查询统一使用 `serviceName:"order" AND ...` 定位 `traceId` 
 Phase B 用 `traceId:"{traceId}"` 查全链路。
 
 | 场景 | 方法入口 | 日志锚点/关键词 | 推荐查询 | 说明 |
 |------|----------|----------------|----------|------|
-| 下单请求 | `com.xhqb.order.biz.service.impl.loan.LoanServiceImpl#loanOrder` | `[借款下单]下单请求为` | `serviceName:"order" AND message:"[借款下单]下单请求为" AND message:"{value}"` | 校验通过后作为 Phase A 入口。相关 WARN 锚点：`[借款下单]出现并发请求`（Redis 锁拦截）、`[借款下单]请求参数有误`、`[借款下单]订单号因定价问题拦截但返回成功`（Thor 定价拦截）、`[借款下单]自营订单次新规则拦截`（次新客户规则） |
-| 下单处理 | `com.xhqb.order.biz.service.impl.loan.LoanTemplate#loan` | `[借款下单]下单请求为` | `serviceName:"order" AND message:"[借款下单]下单请求为" AND message:"{value}"` | **下单核心流程总控** |
-| 下单拦截 | `com.xhqb.order.biz.service.impl.loan.LoanServiceImpl#loanCheck` | - | `serviceName:order AND message:"[借款校验]进入"` | **下单核心流程之一**：借款 |
+| 下单请求 | `com.xhqb.order.biz.service.impl.loan.LoanServiceImpl#loanOrder` | `[借款下单]下单请求为` | `serviceName:"order" AND message:"[借款下单]下单请求为" AND message:"{value}"` | 校验通过后作为 Phase A 入口。相关 WARN 锚点：`[借款下单]出现并发请求`（Redis 锁拦截）、`[借款下单]请求参数有误`，业务模式通过入参字段`loanSourceEnum`来区分，`API：api借款流程，SELF_SUPPORT：自营借款流程` |
+| 下单核心 | `com.xhqb.order.biz.service.impl.loan.LoanTemplate#loan` | - | - | **下单核心流程总控，包含流程：`下单拦截`、``、``、``、``** |
+| 下单拦截 | `com.xhqb.order.biz.service.impl.loan.LoanServiceImpl#loanCheck` | `[借款校验]进入` | `serviceName:order AND message:"[借款校验]进入"` | **下单核心流程之一** |
+| 下单拦截结果 | `com.xhqb.order.biz.service.impl.loan.LoanTemplate#loan` | `[借款下单]下单拦截请求` | `serviceName:order AND message:"[借款下单]下单拦截请求"` | 区分下单拦截结果，`intercept=false`：未拦截；`intercept=true`：拦截，`interceptFilter`：拦截器，`interceptMessage`：拦截原因，`errorCode`：下单失败code |
+| 合规拦截 | `com.xhqb.order.biz.service.impl.loan.LoanTemplate#regulatoryBlockFilter` | `下单命中新拦截试算页` | `serviceName:order AND message:"下单命中新拦截试算页"` | 合规业务拦截 |
+| 反欺诈 | `com.xhqb.order.biz.service.external.credit.CreditService#loanAntiFraud` | `[借款反欺诈]借款下单反欺诈` | `serviceName:"order" AND message:"借款下单反欺诈" AND message:"{value}"` | 代码锚点含 `[借款反欺诈]`。**内置手动重试**（可用 `message:"com.xhqb.order.biz.service.external.credit.CreditService"`查询，**重点强调：这里的反欺诈只是调用风控反欺诈服务，返回的是服务调用是否成功，并不代表反欺诈通过，结果参考下面的`反欺诈结果`行** |
+| 反欺诈结果 | `com.xhqb.order.batch.service.AntifraudNoticeConsumer#handleMessage` | `AntifraudNoticeConsumer推进来的消息ID` | `serviceName:"order-batch" AND message:"AntifraudNoticeConsumer推进来的消息ID"` | 消息中字段`antifraudResult`:`PASS`-风控审批通过，`REFUSE`-风控审批拒绝，其它值可参考这个枚举`com.xhqb.order.common.service.model.enums.AntiFraudResultEnum` |
+| 业务异常 | `com.xhqb.order.biz.service.impl.loan.LoanServiceImpl#loanOrder` | `[借款下单]请求出现业务异常` | `serviceName:"order" AND message:"[借款下单]请求出现业务异常" AND message:"{value}"` | 提取 ResultEnum、异常 message，定位业务失败根因 |
+| 系统错误 | `com.xhqb.order.biz.service.impl.loan.LoanServiceImpl#loanOrder` | `[借款下单]出现系统错误` | `serviceName:"order" AND message:"[借款下单]出现系统错误"` | 命中后必须展开 traceId 查堆栈，定位异常根因 |
 | 下单结果 | `com.xhqb.order.biz.service.impl.loan.LoanServiceImpl#loanOrder` | `[借款下单]下单请求结果为` | `serviceName:"order" AND message:"[借款下单]下单请求结果为" AND message:"{value}"` | 返回对象中如果属性`success`为`true`，说明**下单成功** |
-| 业务异常 | `com.xhqb.order.biz.service.impl.loan.LoanServiceImpl#loanOrder` | `[借款下单]请求出现业务异常` | `serviceName:"order" AND message:"[借款下单]请求出现业务异常" AND message:"{value}"` | 提取 ResultEnum、异常 message |
-| 系统错误 | `com.xhqb.order.biz.service.impl.loan.LoanServiceImpl#loanOrder` | `[借款下单]出现系统错误` | `serviceName:"order" AND message:"[借款下单]出现系统错误"` | 命中后必须展开 traceId 查堆栈 |
-| 反欺诈 | `com.xhqb.order.biz.service.external.credit.CreditService#loanAntiFraud` | `[借款反欺诈]借款下单反欺诈` | `serviceName:"order" AND message:"借款下单反欺诈" AND message:"{value}"` | 代码锚点含 `[借款反欺诈]`。**内置手动重试**（可用 `message:"com.xhqb.order.biz.service.external.credit.CreditService"`查询，**重点强调：这里的反欺诈只是调用风控反欺诈服务，返回的是服务调用是否成功，并不代表反欺诈通过，可根据返回结果中的`afBizCode`的值结合反欺诈结果异步通知MQ：`AntifraudNoticeConsumer`查询反欺诈结果，查询sql：`serviceName:"order-batch" and message:"{afBizCode}"`** |
 
-## 关键失败模式
+## 关键失败场景
 
 | 现象 | 优先诊断 |
 |------|----------|
-| 您存在不良借款记录，无法借款 | T4 提现门槛拦截。查 `queryOverdueMark`、`UserOverDueHisHandler`、`未通过提现门槛` |
+| 您存在不良借款记录，无法借款 | T4 提现门槛拦截。查 `未通过提现门槛`、`UserOverDueHisHandler`、`queryOverdueMark` |
 | 您有借款已逾期噢 | 当前逾期拦截。查 `orderLocalService.getUserOverDueMark()` |
 | 一直提示重新签约 | 交给 `xh-log-lookup-sign`，该场景需要同时看 RESIGN、协议失效、还款失败和全渠道禁闭 |
 | 序列到拦截步骤停止 | 看拦截条件和 checkCode |
@@ -70,31 +73,11 @@ Phase B 用 `traceId:"{traceId}"` 查全链路。
 | 出现业务异常 | 提取错误码和异常信息 |
 | 出现系统错误 | 提取堆栈 |
 | `[资金路由]查询订单定价为null` | 定价异常 |
-| `[资金自动路由]被xx借款渠道拒绝` | 资方拒绝，确认是否重新分配 |
 | `XhCardService.dynamicXhCardView` + `ReCreditService Dubbo超时` | **非下单类最频发ERROR**。`ReCreditService.reCredit` 方法 timeout(10s)，影响 huika card 视图渲染。涉及多个 provider 节点（172.18.26.40 等），每条产生双条 ERROR（XhCardServiceImpl + ProfileFilter）。排查：查 ReCreditService 所在 pod 健康状态，或确认 drools 服务是否降级 |
 | `[协议共享]根据身份证查询CID失败` | `SharingAgreementServiceImpl` 持续报错，多个身份证号均查不到 CID。不是偶发问题，需确认数据源或缓存同步状态 |
 | `AccountOService - [释放客户冻结额度]异常` | `CreditManagerService.unfreeze` Dubbo 超时。偶发，不影响主流程 |
 | `[借款试算]api借款还款计划试算请求参数不对` | 优先检查 apiCheck 四条件和 `EmbeddedPartnerEnum` 部署版本 |
 | 异常日志数 > 入口数但结果全部 SUCCESS | 重试后成功，通常是健康信号。常见来源：**反欺诈重试**（CreditService 内建手动重试，最多3次，WARN日志含 `第N次尝试, Nms后重试`；若重试后成功即继续流程，不抛异常） |
-| `queryOverdueMark` 拦截但 `guideCheckAbility` success | 两接口语义不同，以 `queryOverdueMark` 为准 |
-| 预检全部通过(canLoan:true/T4通过)但客户仍无法借款 | **关键盲区检查**：①`guideCheckAbility`比`queryOverdueMark`多一层还款计划级别逾期检查（`orderRepayplanMapper.queryMaxOverdueDays(orderIdList)`，maxOverdueDays<7拦截），该检查为DEBUG级别CLS不采集 → 合同状态REPAYING+逾期0天不代表每个还款计划都没近7天逾期；②查h5-loan的miniCardInfo中资方封禁信息(frozenFunds)和allRefuse字段；③查weixin-h5api的getExperimentItem Dubbo超时(实验配置加载失败可能导致借款入口异常)；④确认客户有实际提交订单而非仅查看页面 |
-
-## 存量状态查询
-
-用户问“这个 cid 有多少笔未结清合同/名下有哪些在还合同时”，不要使用入口覆盖表。流程：
-
-1. grep 代码找打印合同状态的日志：`contractNoState`、`orderStatus`、`accountStatus`、`isNotSettle`、`REPAYING`、`OVERDUE`。
-2. 用代码中确认的日志模式 + cid 值查 CLS；没有明确前缀时退回 `serviceName:"order" AND message:"{cid}"`。
-3. 用主控 `cls_query.py` 加载更多并提取全文。
-4. 从全文解析 CK/CS 合同号和状态字段。
-5. 说明限制：CLS 只反映日志范围内出现过的合同；30 天内无活动的存量合同可能不会出现。
-
-状态定义：
-
-- 未结清列表：`order_status IN ('REPAYING','OVERDUE')`
-- 未结清计数排除：`REPAYED`、`REFUNDSETTLED`、`SETTLED`、`EARLY_REPAYED`、`CANCEL`、`FAIL`、`SINGFAIL`、`LOAN_REFUSE`
-
-完整 SQL 和实操细节见 references。
 
 ## 健康检查
 
@@ -104,7 +87,7 @@ Step 0 使用 `level:"ERROR"` 通用查询，不依赖代码锚点，可直接�
 
 | Step | 查询sql | 说明 |
 |------|------|------|
-| ***step1:ERROR总览*** | `serviceName:"order" AND level:"ERROR"` | ⚠️ 必做。捕获所有 ERROR 日志，不限于 [借款下单] 前缀。避免漏掉 ReCreditService 超时、协议共享CID查询失败、AccountOService 异常等非下单类错误 |
+| step1：借款下单异常总览 | `serviceName:"order" AND (message:"[借款下单]出现系统错误" OR message:"[借款下单]请求出现业务异常")` | 包含`业务异常`和`系统异常` |
 | A 入口量 | `serviceName:"order" AND message:"[借款下单]下单请求为"` | 中文查询，需要浏览器注入 |
 | B 结果状态 | `serviceName:"order" AND message:"[借款下单]下单请求结果为"` | 中文查询，需要浏览器注入 |
 | C 异常 | `serviceName:"order" AND (message:"[借款下单]出现系统错误" OR message:"[借款下单]请求出现业务异常")` | 中文查询，需要浏览器注入 |
