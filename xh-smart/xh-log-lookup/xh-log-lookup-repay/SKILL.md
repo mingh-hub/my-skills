@@ -23,20 +23,20 @@ metadata:
 
 > Phase A 查询统一前缀: `serviceName:"order" AND ...`（还款逻辑也在 order 服务中）
 
-| 场景 | 方法入口 | 日志锚点/关键词 | 推荐查询 | 说明 |
-|------|----------|----------------|----------|------|
-| 还款请求 | `com.xhqb.order.biz.service.impl.ArbitrarilyRepayServiceImpl#sendRepay` | `还款请求`、`支付金额` | `serviceName:"order" AND message:"还款请求" AND message:"orderId:{value}"` | 借助 orderId 或 contractNo 值搜确认完整链路 |
-| 还款状态同步 | `com.xhqb.order.biz.service.impl.RepayOrderServiceImpl#syncRepaySingleOrder` | `同步单个订单还款状态` | `serviceName:"order" AND message:"同步单个订单还款状态" AND message:"订单{orderId}"` | 自动代扣/回调状态同步入口 |
-| 合同还款状态 | `com.xhqb.order.biz.service.impl.RepayOrderServiceImpl#syncRepaySingleOrder` | `合同`、`订单状态`、`账户状态` | `serviceName:"order" AND message:"合同{contractNo}"` | message 中的 contractNo placeholder 不参与锚点校验 |
-| 还款试算 | `com.xhqb.order.biz.service.impl.RepayOrderServiceImpl#computeEarlyRepay` | `[还款试算]` | `serviceName:"order" AND message:"[还款试算]" AND message:"{contractNo}"` | 正常/提前结清试算可能落在不同私有方法 |
-| 任性还款（即期/提前结清） | `com.xhqb.order.biz.service.impl.ArbitrarilyRepayServiceImpl#sendRepay` | `还款请求,保存还款流水` | `serviceName:"order" AND message:"还款请求,保存还款流水" AND message:"{contractNo}"` | 只能证明请求入库，不能证明结清成功 |
-| 聚合支付 | `com.xhqb.order.biz.service.impl.AggregateRepayServiceImpl#aggregateRapaySend` | `[聚合支付]`、`还款请求` | `serviceName:"order" AND message:"[聚合支付]" AND message:"orderId:{value}"` | 0 命中时退回 orderId/contractNo 值搜 |
-| 聚合支付检查 | `com.xhqb.order.biz.service.impl.AggregateRepayServiceImpl#aggregateRepayCheck` | `[聚合支付类型]查询` | `serviceName:"order" AND message:"[聚合支付类型]查询" AND message:"orderId:{value}"` | 模板若不匹配，以当前代码锚点为准 |
-| 好友代付 | `com.xhqb.order.biz.service.impl.AggregateRepayServiceImpl#friendRepayInit` | `[好友代付]` | `serviceName:"order" AND message:"[好友代付]" AND message:"{orderId}"` | 方法名如变更，先搜 `[好友代付]` 锚点 |
-| API代扣 | `com.xhqb.order.biz.service.impl.ArbitrarilyRepayServiceImpl#sendRepay` | `orderId=[{}]是API渠道` | `serviceName:"order" AND message:"orderId=[{value}]"` | 固定片段为 `orderId=[` 和 `是API渠道` |
-| 查询异常 | `com.xhqb.order.biz.service.impl.ArbitrarilyRepayServiceImpl#queryRepayOrderInfo` | `[查询订单信息以及还款金额]` | `serviceName:"order" AND message:"[查询订单信息以及还款金额]" AND message:"cid:{cid}"` | cid 查不到时改用 orderId/contractNo |
-| 返现券 | `com.xhqb.order.biz.service.impl.ArbitrarilyRepayServiceImpl#queryRepayOrderInfo` | `[返现券]计算返现券请求` | `serviceName:"order" AND message:"[返现券]" AND message:"orderId:{value}"` | 还款页面返现券计算入口 |
-| 订单已出账（某期已到还款日） | `com.xhqb.order.biz.service.impl.ArbitrarilyRepayServiceImpl#queryRepayOrderInfo` | `订单id`、`期已出账` | `serviceName:"order" AND message:"{orderId}" AND message:"期已出账"` | 只表示该期到还款日，不等于结清 |
+| 场景 | 方法入口 | 日志锚点/关键词 | 推荐查询 | 关键指标 | 说明 |
+|------|----------|----------------|----------|----------|------|
+| 还款请求 | `com.xhqb.order.biz.service.impl.ArbitrarilyRepayServiceImpl#sendRepay` | `还款请求`、`支付金额` | `serviceName:"order" AND message:"还款请求" AND message:"orderId:{value}"` | | 借助 orderId 或 contractNo 值搜确认完整链路 |
+| 还款状态同步 | `com.xhqb.order.biz.service.impl.RepayOrderServiceImpl#syncRepaySingleOrder` | `同步单个订单还款状态` | `serviceName:"order" AND message:"同步单个订单还款状态" AND message:"订单{orderId}"` | | 自动代扣/回调状态同步入口 |
+| 合同还款状态 | `com.xhqb.order.biz.service.impl.RepayOrderServiceImpl#syncRepaySingleOrder` | `合同`、`订单状态`、`账户状态` | `serviceName:"order" AND message:"合同{contractNo}"` | | message 中的 contractNo placeholder 不参与锚点校验 |
+| 还款试算 | `com.xhqb.order.biz.service.impl.RepayOrderServiceImpl#computeEarlyRepay` | `[还款试算]` | `serviceName:"order" AND message:"[还款试算]" AND message:"{contractNo}"` | | 正常/提前结清试算可能落在不同私有方法 |
+| 任性还款（即期/提前结清） | `com.xhqb.order.biz.service.impl.ArbitrarilyRepayServiceImpl#sendRepay` | `还款请求,保存还款流水` | `serviceName:"order" AND message:"还款请求,保存还款流水" AND message:"{contractNo}"` | | 只能证明请求入库，不能证明结清成功 |
+| 聚合支付 | `com.xhqb.order.biz.service.impl.AggregateRepayServiceImpl#aggregateRapaySend` | `[聚合支付]`、`还款请求` | `serviceName:"order" AND message:"[聚合支付]" AND message:"orderId:{value}"` | | 0 命中时退回 orderId/contractNo 值搜 |
+| 聚合支付检查 | `com.xhqb.order.biz.service.impl.AggregateRepayServiceImpl#aggregateRepayCheck` | `[聚合支付类型]查询` | `serviceName:"order" AND message:"[聚合支付类型]查询" AND message:"orderId:{value}"` | | 模板若不匹配，以当前代码锚点为准 |
+| 好友代付 | `com.xhqb.order.biz.service.impl.AggregateRepayServiceImpl#friendRepayInit` | `[好友代付]` | `serviceName:"order" AND message:"[好友代付]" AND message:"{orderId}"` | | 方法名如变更，先搜 `[好友代付]` 锚点 |
+| API代扣 | `com.xhqb.order.biz.service.impl.ArbitrarilyRepayServiceImpl#sendRepay` | `orderId=[{}]是API渠道` | `serviceName:"order" AND message:"orderId=[{value}]"` | | 固定片段为 `orderId=[` 和 `是API渠道` |
+| 查询异常 | `com.xhqb.order.biz.service.impl.ArbitrarilyRepayServiceImpl#queryRepayOrderInfo` | `[查询订单信息以及还款金额]` | `serviceName:"order" AND message:"[查询订单信息以及还款金额]" AND message:"cid:{cid}"` | | cid 查不到时改用 orderId/contractNo |
+| 返现券 | `com.xhqb.order.biz.service.impl.ArbitrarilyRepayServiceImpl#queryRepayOrderInfo` | `[返现券]计算返现券请求` | `serviceName:"order" AND message:"[返现券]" AND message:"orderId:{value}"` | | 还款页面返现券计算入口 |
+| 订单已出账（某期已到还款日） | `com.xhqb.order.biz.service.impl.ArbitrarilyRepayServiceImpl#queryRepayOrderInfo` | `订单id`、`期已出账` | `serviceName:"order" AND message:"{orderId}" AND message:"期已出账"` | | 只表示该期到还款日，不等于结清 |
 
 ## 用户输入 → 首次查询策略
 

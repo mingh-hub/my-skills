@@ -46,18 +46,18 @@ metadata:
 Phase A 查询统一使用 `serviceName:"order" AND ...` 定位 `traceId` 
 Phase B 用 `traceId:"{traceId}"` 查全链路。
 
-| 场景 | 方法入口 | 日志锚点/关键词 | 推荐查询 | 说明 |
-|------|----------|----------------|----------|------|
-| 下单请求 | `com.xhqb.order.biz.service.impl.loan.LoanServiceImpl#loanOrder` | `[借款下单]下单请求为` | `serviceName:"order" AND message:"[借款下单]下单请求为" AND message:"{value}"` | 校验通过后作为 Phase A 入口。相关 WARN 锚点：`[借款下单]出现并发请求`（Redis 锁拦截）、`[借款下单]请求参数有误`，业务模式通过入参字段`loanSourceEnum`来区分，`API：api借款流程，SELF_SUPPORT：自营借款流程` |
-| 下单核心 | `com.xhqb.order.biz.service.impl.loan.LoanTemplate#loan` | - | - | **下单核心流程总控，包含流程：`下单拦截`、``、``、``、``** |
-| 下单拦截 | `com.xhqb.order.biz.service.impl.loan.LoanServiceImpl#loanCheck` | `[借款校验]进入` | `serviceName:order AND message:"[借款校验]进入"` | **下单核心流程之一** |
-| 下单拦截结果 | `com.xhqb.order.biz.service.impl.loan.LoanTemplate#loan` | `[借款下单]下单拦截请求` | `serviceName:order AND message:"[借款下单]下单拦截请求"` | 区分下单拦截结果，`intercept=false`：未拦截；`intercept=true`：拦截，`interceptFilter`：拦截器，`interceptMessage`：拦截原因，`errorCode`：下单失败code |
-| 合规拦截 | `com.xhqb.order.biz.service.impl.loan.LoanTemplate#regulatoryBlockFilter` | `下单命中新拦截试算页` | `serviceName:order AND message:"下单命中新拦截试算页"` | 合规业务拦截 |
-| 反欺诈 | `com.xhqb.order.biz.service.external.credit.CreditService#loanAntiFraud` | `[借款反欺诈]借款下单反欺诈` | `serviceName:"order" AND message:"借款下单反欺诈" AND message:"{value}"` | 代码锚点含 `[借款反欺诈]`。**内置手动重试**（可用 `message:"com.xhqb.order.biz.service.external.credit.CreditService"`查询，**重点强调：这里的反欺诈只是调用风控反欺诈服务，返回的是服务调用是否成功，并不代表反欺诈通过，结果参考下面的`反欺诈结果`行** |
-| 反欺诈结果 | `com.xhqb.order.batch.service.AntifraudNoticeConsumer#handleMessage` | `AntifraudNoticeConsumer推进来的消息ID` | `serviceName:"order-batch" AND message:"AntifraudNoticeConsumer推进来的消息ID"` | 消息中字段`antifraudResult`:`PASS`-风控审批通过，`REFUSE`-风控审批拒绝，其它值可参考这个枚举`com.xhqb.order.common.service.model.enums.AntiFraudResultEnum` |
-| 业务异常 | `com.xhqb.order.biz.service.impl.loan.LoanServiceImpl#loanOrder` | `[借款下单]请求出现业务异常` | `serviceName:"order" AND message:"[借款下单]请求出现业务异常" AND message:"{value}"` | 提取 ResultEnum、异常 message，定位业务失败根因 |
-| 系统错误 | `com.xhqb.order.biz.service.impl.loan.LoanServiceImpl#loanOrder` | `[借款下单]出现系统错误` | `serviceName:"order" AND message:"[借款下单]出现系统错误"` | 命中后必须展开 traceId 查堆栈，定位异常根因 |
-| 下单结果 | `com.xhqb.order.biz.service.impl.loan.LoanServiceImpl#loanOrder` | `[借款下单]下单请求结果为` | `serviceName:"order" AND message:"[借款下单]下单请求结果为" AND message:"{value}"` | 返回对象中如果属性`success`为`true`，说明**下单成功** |
+| 场景 | 方法入口 | 日志锚点/关键词 | 推荐查询 | 关键指标 | 说明 |
+|------|----------|----------------|----------|----------|------|
+| 下单请求 | `com.xhqb.order.biz.service.impl.loan.LoanServiceImpl#loanOrder` | `[借款下单]下单请求为` | `serviceName:"order" AND message:"[借款下单]下单请求为" AND message:"{value}"` | | 校验通过后作为 Phase A 入口。相关 WARN 锚点：`[借款下单]出现并发请求`（Redis 锁拦截）、`[借款下单]请求参数有误`，业务模式通过入参字段`loanSourceEnum`来区分，`API：api借款流程，SELF_SUPPORT：自营借款流程` |
+| 下单核心 | `com.xhqb.order.biz.service.impl.loan.LoanTemplate#loan` | - | - | | **下单核心流程总控，包含流程：`下单拦截`、``、``、``、``** |
+| 下单拦截 | `com.xhqb.order.biz.service.impl.loan.LoanServiceImpl#loanCheck` | `[借款校验]进入` | `serviceName:order AND message:"[借款校验]进入"` | | **下单核心流程之一** |
+| 下单拦截结果 | `com.xhqb.order.biz.service.impl.loan.LoanTemplate#loan` | `[借款下单]下单拦截请求` | `serviceName:order AND message:"[借款下单]下单拦截请求"` | | 区分下单拦截结果，`intercept=false`：未拦截；`intercept=true`：拦截，`interceptFilter`：拦截器，`interceptMessage`：拦截原因，`errorCode`：下单失败code |
+| 合规拦截 | `com.xhqb.order.biz.service.impl.loan.LoanTemplate#regulatoryBlockFilter` | `下单命中新拦截试算页` | `serviceName:order AND message:"下单命中新拦截试算页"` | | 合规业务拦截 |
+| 反欺诈 | `com.xhqb.order.biz.service.external.credit.CreditService#loanAntiFraud` | `[借款反欺诈]借款下单反欺诈` | `serviceName:"order" AND message:"借款下单反欺诈" AND message:"{value}"` | | 代码锚点含 `[借款反欺诈]`。**内置手动重试**（可用 `message:"com.xhqb.order.biz.service.external.credit.CreditService"`查询，**重点强调：这里的反欺诈只是调用风控反欺诈服务，返回的是服务调用是否成功，并不代表反欺诈通过，结果参考下面的`反欺诈结果`行** |
+| 反欺诈结果 | `com.xhqb.order.batch.service.AntifraudNoticeConsumer#handleMessage` | `AntifraudNoticeConsumer推进来的消息ID` | `serviceName:"order-batch" AND message:"AntifraudNoticeConsumer推进来的消息ID"` | | 消息中字段`antifraudResult`:`PASS`-风控审批通过，`REFUSE`-风控审批拒绝，其它值可参考这个枚举`com.xhqb.order.common.service.model.enums.AntiFraudResultEnum` |
+| 业务异常 | `com.xhqb.order.biz.service.impl.loan.LoanServiceImpl#loanOrder` | `[借款下单]请求出现业务异常` | `serviceName:"order" AND message:"[借款下单]请求出现业务异常" AND message:"{value}"` | | 提取 ResultEnum、异常 message，定位业务失败根因 |
+| 系统错误 | `com.xhqb.order.biz.service.impl.loan.LoanServiceImpl#loanOrder` | `[借款下单]出现系统错误` | `serviceName:"order" AND message:"[借款下单]出现系统错误"` | | 命中后必须展开 traceId 查堆栈，定位异常根因 |
+| 下单结果 | `com.xhqb.order.biz.service.impl.loan.LoanServiceImpl#loanOrder` | `[借款下单]下单请求结果为` | `serviceName:"order" AND message:"[借款下单]下单请求结果为" AND message:"{value}"` | | 返回对象中如果属性`success`为`true`，说明**下单成功** |
 
 ## 关键失败场景
 

@@ -19,23 +19,23 @@ member, rubick, benefit, activity, order (CouponService), h5-loan (SelfLoanProce
 
 > 权益模块跨多个服务，注意 serviceName 按实际项目切换。
 
-| 场景 | 方法入口 | 日志锚点/关键词 | 推荐查询 | 说明 |
-|------|----------|----------------|----------|------|
-| 优惠券查询 | `com.xhqb.order.biz.service.impl.CouponServiceImpl#checkCouponIsAvailable` | `[优惠券处理]查询优惠券是否可用` | `serviceName:"order" AND message:"[优惠券处理]" AND message:"{orderId或cid}"` | 私有方法锚点，查询时优先用订单/客户值搜 |
-| 优惠券使用 | `com.xhqb.order.biz.service.impl.CouponServiceImpl#handleCouponDerate` | `[优惠券处理]调用账务使用优惠券` | `serviceName:"order" AND message:"[优惠券处理]调用账务" AND message:"{orderId}"` | 账务调用失败时继续查 coupon 待处理记录 |
-| 返现券 | `com.xhqb.order.biz.service.event.cashback.CashBackEventListen#onApplicationEvent` | `[返现券]` | `serviceName:"order" AND message:"[返现券]" AND message:"{orderId}"` | 还款成功事件和页面计算都可能出现返现券日志 |
-| 权益订单 | `com.xhqb.order.biz.service.impl.ChannelBenefitOrderServiceImpl#saveBenefitOrder` | `[权益订单]创建` | `serviceName:"order" AND message:"[权益订单]" AND message:"orderId:{orderId}"` | 权益订单创建入口 |
-| 乐活月卡 | `com.xhqb.order.biz.service.event.lhkmon.LhkMonEventListener#handleEvent` | `[乐活月卡]` | `serviceName:"order" AND message:"[乐活月卡]" AND message:"{cid}"` | 放款结果事件触发 |
-| 获额卡 | `com.xhqb.order.biz.service.impl.UserOrderServiceImpl#queryIsSubNewMarketUser` | `[获额卡]` | `serviceName:"order" AND message:"[获额卡]" AND message:"cid:{cid}"` | 获额卡规则查询入口 |
-| H5 权益勾选 | `待代码确认: SelfLoanProcessStrategy#loanProcess` | `是否勾选权益` | `serviceName:"h5-loan" AND message:"是否勾选权益"` | 本地未发现 h5-loan 源码，查询前需按 h5-loan 代码确认 |
-| 电商权益拦截 | `待代码确认: SelfLoanProcessStrategy#loanProcess` | `电商权益拦截` | `serviceName:"h5-loan" AND message:"电商权益拦截"` | 本地未发现 h5-loan 源码 |
-| 异常权益订单(01) | `com.xhqb.order.biz.service.impl.loan.LoanServiceImpl#loanOrder` | `[借款下单]保存异常权益订单记录` | `serviceName:"order" AND message:"保存异常权益订单记录"` | 勾选权益但未生成权益订单且为 24 期定价 |
-| 异常权益订单(02) | `com.xhqb.order.biz.service.impl.OrderServiceImpl#getOrderPrice` | `[规则定价]保存异常权益订单记录` | `serviceName:"order" AND message:"保存异常权益订单记录"` | 勾选权益但订单仍为 36 期定价 |
-| 异常权益订单(03) | `com.xhqb.order.biz.service.event.marketdeduct.MarketDeductEventListen#onApplicationEvent` | `[未通知权益]保存异常权益订单记录` | `serviceName:"order" AND message:"保存异常权益订单记录"` | 权益系统通知失败 |
-| 权益校验异常 | `com.xhqb.order.biz.service.impl.loan.LoanTemplate#loan` | `权益校验异常` | `serviceName:"order" AND message:"权益校验异常"` | 下单模板内权益校验 |
-| 渠道权益通知 | `com.xhqb.order.biz.service.impl.loan.ApiLoanService#loanOrder` | `渠道权益下单通知` | `serviceName:"order" AND message:"渠道权益下单通知"` | API 下单权益通知 |
-| 权益包查询 | `com.xhqb.order.biz.service.external.market.MarketService#queryBenefitProductInfo` | `[权益包信息]` | `serviceName:"order" AND message:"权益包信息"` | 调 market/member 查询权益包信息 |
-| 权益申请 | `com.xhqb.order.biz.service.impl.api.LoanVipServiceImpl#loanVipApply` | `[权益申请]权益申请` | `serviceName:"order" AND message:"权益申请"` | 权益申请主入口 |
+| 场景 | 方法入口 | 日志锚点/关键词 | 推荐查询 | 关键指标 | 说明 |
+|------|----------|----------------|----------|----------|------|
+| 优惠券查询 | `com.xhqb.order.biz.service.impl.CouponServiceImpl#checkCouponIsAvailable` | `[优惠券处理]查询优惠券是否可用` | `serviceName:"order" AND message:"[优惠券处理]" AND message:"{orderId或cid}"` | | 私有方法锚点，查询时优先用订单/客户值搜 |
+| 优惠券使用 | `com.xhqb.order.biz.service.impl.CouponServiceImpl#handleCouponDerate` | `[优惠券处理]调用账务使用优惠券` | `serviceName:"order" AND message:"[优惠券处理]调用账务" AND message:"{orderId}"` | | 账务调用失败时继续查 coupon 待处理记录 |
+| 返现券 | `com.xhqb.order.biz.service.event.cashback.CashBackEventListen#onApplicationEvent` | `[返现券]` | `serviceName:"order" AND message:"[返现券]" AND message:"{orderId}"` | | 还款成功事件和页面计算都可能出现返现券日志 |
+| 权益订单 | `com.xhqb.order.biz.service.impl.ChannelBenefitOrderServiceImpl#saveBenefitOrder` | `[权益订单]创建` | `serviceName:"order" AND message:"[权益订单]" AND message:"orderId:{orderId}"` | | 权益订单创建入口 |
+| 乐活月卡 | `com.xhqb.order.biz.service.event.lhkmon.LhkMonEventListener#handleEvent` | `[乐活月卡]` | `serviceName:"order" AND message:"[乐活月卡]" AND message:"{cid}"` | | 放款结果事件触发 |
+| 获额卡 | `com.xhqb.order.biz.service.impl.UserOrderServiceImpl#queryIsSubNewMarketUser` | `[获额卡]` | `serviceName:"order" AND message:"[获额卡]" AND message:"cid:{cid}"` | | 获额卡规则查询入口 |
+| H5 权益勾选 | `待代码确认: SelfLoanProcessStrategy#loanProcess` | `是否勾选权益` | `serviceName:"h5-loan" AND message:"是否勾选权益"` | | 本地未发现 h5-loan 源码，查询前需按 h5-loan 代码确认 |
+| 电商权益拦截 | `待代码确认: SelfLoanProcessStrategy#loanProcess` | `电商权益拦截` | `serviceName:"h5-loan" AND message:"电商权益拦截"` | | 本地未发现 h5-loan 源码 |
+| 异常权益订单(01) | `com.xhqb.order.biz.service.impl.loan.LoanServiceImpl#loanOrder` | `[借款下单]保存异常权益订单记录` | `serviceName:"order" AND message:"保存异常权益订单记录"` | | 勾选权益但未生成权益订单且为 24 期定价 |
+| 异常权益订单(02) | `com.xhqb.order.biz.service.impl.OrderServiceImpl#getOrderPrice` | `[规则定价]保存异常权益订单记录` | `serviceName:"order" AND message:"保存异常权益订单记录"` | | 勾选权益但订单仍为 36 期定价 |
+| 异常权益订单(03) | `com.xhqb.order.biz.service.event.marketdeduct.MarketDeductEventListen#onApplicationEvent` | `[未通知权益]保存异常权益订单记录` | `serviceName:"order" AND message:"保存异常权益订单记录"` | | 权益系统通知失败 |
+| 权益校验异常 | `com.xhqb.order.biz.service.impl.loan.LoanTemplate#loan` | `权益校验异常` | `serviceName:"order" AND message:"权益校验异常"` | | 下单模板内权益校验 |
+| 渠道权益通知 | `com.xhqb.order.biz.service.impl.loan.ApiLoanService#loanOrder` | `渠道权益下单通知` | `serviceName:"order" AND message:"渠道权益下单通知"` | | API 下单权益通知 |
+| 权益包查询 | `com.xhqb.order.biz.service.external.market.MarketService#queryBenefitProductInfo` | `[权益包信息]` | `serviceName:"order" AND message:"权益包信息"` | | 调 market/member 查询权益包信息 |
+| 权益申请 | `com.xhqb.order.biz.service.impl.api.LoanVipServiceImpl#loanVipApply` | `[权益申请]权益申请` | `serviceName:"order" AND message:"权益申请"` | | 权益申请主入口 |
 
 ## 用户输入 → 首次查询策略
 
