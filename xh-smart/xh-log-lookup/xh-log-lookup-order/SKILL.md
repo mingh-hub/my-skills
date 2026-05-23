@@ -35,7 +35,7 @@ metadata:
 | `orderId` / `订单号` | `serviceName:"order" AND message:"{value}"` | 值搜，不加 `orderId:` 前缀 |
 | `cid` / `客户id` | `serviceName:"order" AND message:"{value}"` | 值搜，不加 `cid:` 前缀 |
 | `contractNo` / `合同号` | `serviceName:"order" AND message:"{value}"` | 值搜，不加 `contractNo:` 前缀 |
-| `mobilePhone` / `手机号` | 根据手机号定位 `cid`/`orderId` | 找不到时问用户补充 `cid`/`orderId` |
+| `mobilePhone` / `手机号` | 根据手机号定位 `cid`/`orderId` | 找不到时扩大查询时间`now-7d,now` |
 | `identityNo` / `身份证号` | 根据身份证号定位 `cid`/`orderId` | 找不到时问用户补充 `cid`/`orderId` |
 
 手机号、身份证号查询可能无法查到准确信息，可以通过日志查询将手机号、身份证号转成客户`cid`再查；
