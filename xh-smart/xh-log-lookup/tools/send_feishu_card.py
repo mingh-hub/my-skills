@@ -122,17 +122,10 @@ def build_card(title, color, cls_url, cls_url_expanded, data):
 
     summary_fields = data.get("summary_fields", [])
     if summary_fields:
-        col_left, col_right = [], []
-        for item in summary_fields:
-            col_left.append({"tag": "markdown", "content": f"**{item['label']}**"})
-            col_right.append({"tag": "markdown", "content": item["value"]})
+        lines = [f"**{item['label']}**: {item['value']}" for item in summary_fields]
         elements.append({
-            "tag": "column_set",
-            "flex_mode": "none",
-            "columns": [
-                {"tag": "column", "width": "weighted", "weight": 1, "elements": col_left},
-                {"tag": "column", "width": "weighted", "weight": 1, "elements": col_right}
-            ]
+            "tag": "div",
+            "text": {"tag": "lark_md", "content": "\n".join(lines)}
         })
         elements.append({"tag": "hr"})
 
@@ -188,14 +181,12 @@ def build_card(title, color, cls_url, cls_url_expanded, data):
     })
 
     card = {
-        "schema": "2.0",
+        "schema": "1.0",
         "header": {
             "title": {"tag": "plain_text", "content": title},
             "template": COLOR_MAP.get(color, "blue")
         },
-        "body": {
-            "elements": elements
-        }
+        "elements": elements
     }
     return card
 
@@ -205,7 +196,7 @@ def send_card(chat_id, card):
     payload = {
         "receive_id": chat_id,
         "msg_type": "interactive",
-        "content": json.dumps({"type": "card_json", "data": card}, ensure_ascii=False)
+        "content": json.dumps(card, ensure_ascii=False)
     }
 
     try:
