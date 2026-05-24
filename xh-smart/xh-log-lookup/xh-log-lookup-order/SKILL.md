@@ -47,7 +47,7 @@ metadata:
 | 反欺诈结果 | `com.xhqb.order.batch.service.AntifraudNoticeConsumer#handleMessage` | `AntifraudNoticeConsumer推进来的消息ID` | `serviceName:"order-batch" AND message:"AntifraudNoticeConsumer推进来的消息ID"` | <ul><li>`antifraudResult`：风控反欺诈返回结果</li></ul> | 消息中字段`antifraudResult`：`PASS`-风控审批通过，`REFUSE`-风控审批拒绝，`CANCEL`-订单取消，主要是这三种状态，如果是其它值可参考这个枚举`com.xhqb.order.common.service.model.enums.AntiFraudResultEnum` |
 | 业务异常 | `com.xhqb.order.biz.service.impl.loan.LoanServiceImpl#loanOrder` | `[借款下单]请求出现业务异常` | `serviceName:"order" AND message:"[借款下单]请求出现业务异常" AND message:"{value}"` | | 提取 ResultEnum、异常 message，定位业务失败根因 |
 | 系统错误 | `com.xhqb.order.biz.service.impl.loan.LoanServiceImpl#loanOrder` | `[借款下单]出现系统错误` | `serviceName:"order" AND message:"[借款下单]出现系统错误"` | | 命中后必须展开 traceId 查堆栈，定位异常根因 |
-| 下单结果 | `com.xhqb.order.biz.service.impl.loan.LoanServiceImpl#loanOrder` | `[借款下单]下单请求结果为` | `serviceName:"order" AND message:"[借款下单]下单请求结果为" AND message:"{value}"` | | 返回对象中如果属性`success`为`true`，说明**下单成功** |
+| 下单成功 | `com.xhqb.order.biz.service.impl.loan.LoanServiceImpl#loanOrder` | `[借款下单]下单请求结果为` | `serviceName:"order" AND message:"[借款下单]下单请求结果为" AND message:"{value}"` | | 返回对象中如果属性`success`为`true`，说明**下单成功**。**下单成功量**`+`**业务异常量**`+`**系统错误量**`=`**下单请求量** |
 
 ## 关键失败场景
 
