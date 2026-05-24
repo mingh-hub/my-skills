@@ -233,6 +233,11 @@ def main() -> int:
     parser.add_argument("--delay", type=float, default=1.0)
     parser.add_argument("--wait", type=float, default=8.0)
     parser.add_argument("--no-browser", action="store_true", help="Only build URLs; do not use Chrome.")
+    parser.add_argument(
+        "--require-complete",
+        action="store_true",
+        help="强制完整数据加载。自动重试加载更多；仍不完整时返回错误 JSON。",
+    )
     parser.add_argument("--input-text", help="Parse an existing CLS text file instead of reading Chrome.")
     args = parser.parse_args()
 
@@ -275,11 +280,54 @@ def main() -> int:
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 1
         load_more_clicks, has_more = load_more(window_id, args.max_load_more, args.delay)
+        if args.require_complete and has_more:
+            total_clicks = load_more_clicks
+            for cap in [50, 100, 200]:
+                if not has_more or total_clicks >= cap:
+                    continue
+                extra_clicks, has_more = load_more(window_id, cap - total_clicks, args.delay)
+                total_clicks += extra_clicks
+                load_more_clicks = total_clicks
+                if not has_more:
+                    break
         text = execute_js(window_id, "document.body.innerText", timeout=60)
         output_path = write_text(args.output, text)
 
     log_count = parse_log_count(text) if text else 0
     loaded_count = count_loaded_logs(text) if text else 0
+
+    if args.require_complete and has_more:
+        result = {
+            "error": "INCOMPLETE_DATA",
+            "error_message": (
+                f"[FATAL] 数据不完整，禁止统计分析。"
+                f"已加载 {loaded_count}/{log_count} 条"
+                f"（{loaded_count * 100 // max(log_count, 1)}%）。"
+                f"请缩小时间范围或拆分查询后重试。"
+            ),
+            "action_required": "SPLIT_AND_RETRY",
+            "suggested_actions": [
+                "缩小 --time 范围（如 now-1d,now 拆为 now-12h,now 和 now-1d,now-12h）",
+                "添加额外过滤条件（如 AND level:\"ERROR\"）减少结果集",
+                f"使用 --max-load-more {min(load_more_clicks * 3, 500)} 增大加载次数",
+            ],
+            "env": args.env,
+            "query": run_query,
+            "cls_url": cls_url,
+            "expanded_url": expanded_url,
+            "output_path": output_path,
+            "log_count": log_count,
+            "loaded_count": loaded_count,
+            "has_more": True,
+            "is_complete": False,
+            "completeness_ratio": round(loaded_count / max(log_count, 1), 3),
+            "PROHIBITION": (
+                "本次查询使用了 --require-complete 但数据未能完全加载。"
+                "严禁基于此不完整数据进行任何统计、计数、占比或汇总分析。"
+            ),
+        }
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 1
 
     result = {
         "env": args.env,
@@ -298,6 +346,7 @@ def main() -> int:
         "loaded_count": loaded_count,
         "has_more": has_more,
         "is_complete": not has_more,
+        "completeness_ratio": round(loaded_count / max(log_count, 1), 3) if log_count > 0 else 1.0,
         "services": parse_services(text) if text else [],
         "contracts": parse_contracts(text) if text else [],
     }

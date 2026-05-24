@@ -32,6 +32,42 @@ metadata:
 
 ## 强制规则
 
+### 数据统计强制约束
+
+本节规则优先级高于所有其他规则。违反本节规则等同于输出错误结论。
+
+#### 统计模式触发条件
+
+当用户意图包含以下任一关键词时，自动进入**统计模式**：
+`统计`、`汇总`、`占比`、`成功率`、`总数`、`计数`、`分布`、`趋势`、`健康检查`、`有多少`、`多少笔`、`有几条`、`总共`、`一共`、`百分比`、`比例`、`平均`、`最多`、`最少`
+
+健康检查（见子 Skill 的 Step 0-4）**始终**属于统计模式。
+
+#### 统计模式三条铁律
+
+1. **必须使用 `--require-complete`**：统计模式下调用 `cls_query.py` 时，必须加 `--require-complete`。无此标志的查询结果禁止用于任何数值统计。
+
+2. **完整性关卡**：工具返回后，先检查 JSON 是否存在 `"error": "INCOMPLETE_DATA"`。若存在：
+   - 禁止对已加载数据做任何计数、汇总、占比计算
+   - 必须按 `suggested_actions` 拆分查询后重试
+   - 拆分后仍不完整：飞书卡片用黄色（yellow），所有数值结论加"（采样值，非精确统计）"后缀
+
+3. **禁止跳过关卡**：只要 `is_complete` 为 false，统计模式下所有百分比、总数、成功率结论都无效。不存在"先看看数据再说"——要么数据完整，要么先拆分。
+
+#### 统计模式工作流
+
+```
+用户请求 → 识别统计关键词 → cls_query.py --require-complete
+  → is_complete=true → 正常分析，输出精确统计
+  → error=INCOMPLETE_DATA → 按 suggested_actions 拆分
+    → 每段都 --require-complete → 合并完整段数据 → 输出统计
+    → 某段仍不完整 → 黄色卡片 + "采样值" 标注
+```
+
+#### 非统计模式
+
+流程追踪（根因分析、单笔排查）不要求 `--require-complete`。部分数据足以定位根因时，可正常分析。
+
 ### 查询方法
 - **环境默认规则**：用户未指定环境时，**必须查生产环境（prod）**。只有用户明确说"查测试环境"时才使用测试 topic。禁止自行假设或优先查测试环境。
 - **traceId 查询与提取**：
@@ -44,6 +80,7 @@ metadata:
 - 执行入口表格推荐查询前，先校验 `方法入口`、`serviceName` 和固定 `message` 片段是否仍能和当前代码匹配；可用 `tools/validate_query_anchors.py` 辅助检查。
 - 标识符值优先直接放入 `message:\"{value}\"`，禁止加 `cid:`、`orderId:`、`contractNo:`
 - 日志查询sql中如果包含中文, 查询不要直接放入 `queryBase64`。使用注入方案：先用 ASCII queryBase64 URL 加载页面，再通过 contenteditable + `execCommand('insertText')` + `String.fromCharCode()` 注入中文查询（详见 `references/cls-react-contenteditable-injection.md`）
+- **分页未加载完** — CLS 每页只显示 20 条，`load_more_clicks` 是否足够？检查 `log_count` 字段
 - 日志平台查询常用 key 见下文"查询语法与字段"段。
 
 ### 推荐查询锚点校验
@@ -61,9 +98,8 @@ metadata:
 
 1. **时间窗口** — `now-1d,now` 是否真的覆盖了日志产生时间？扩大至 `now-7d,now` 或 `now-30d,now` 验证，能查到日志，说明`sql`语法没问题；扩大到`now-30d,now`仍然查不到时，进行第2步校验
 2. **topic 是否正确** — CLS hide* params 可能导致 topic 随机丢失，确认 topic_id 无误
-3. **分页未加载完** — CLS 每页只显示 20 条，`load_more_clicks` 是否足够？检查 `log_count` 字段
-4. **`=` 等号查询退化** — 如果查询含 `message:\"字段=值\"` 且 `log_count` 显示为 topic 总量（数百万级），说明 CLS 退化为全量返回。加 `AND level:\"WARN\"/\"INFO\"` 等额外约束可恢复精确过滤。此时应以实际加载出的日志内容为准
-5. **最后才怀疑语法** — 大部分**语法问题**是时间窗口或分页导致的，此时需要将查询`sql`本地项目做关联，确认日志是否过期，若日志过期提醒用户更新
+3. **`=` 等号查询退化** — 如果查询含 `message:\"字段=值\"` 且 `log_count` 显示为 topic 总量（数百万级），说明 CLS 退化为全量返回。加 `AND level:\"WARN\"/\"INFO\"` 等额外约束可恢复精确过滤。此时应以实际加载出的日志内容为准
+4. **最后才怀疑语法** — 大部分**语法问题**是时间窗口或分页导致的，此时需要将查询`sql`本地项目做关联，确认日志是否过期，若日志过期提醒用户更新
 
 ### 浏览器和 CLS
 
@@ -72,7 +108,7 @@ metadata:
 - 优先使用 `tools/cls_query.py` 构造 URL、打开专用窗口、加载更多、提取 `document.body.innerText`。
 - 不要用 `document.body.innerText.substring(0,N)` 判断结果；CLS 日志数据在页面文本后部。
 - `traceId` 查询也可能超过 20 条；必须加载全部数据进行解析
-- **分析前必须校验完整性**：对比 `log_count`（CLS 报告总数）与 `loaded_count`（实际加载数）。若 `is_complete` 为 false 或 `loaded_count` 远小于 `log_count`，禁止直接下结论。必须：(1) 继续加载更多（增大 `--max-load-more`），或 (2) 缩小查询范围分批查询，或 (3) 在飞书卡片中明确标注"基于 N/M 条采样分析，结论可能不完整"并使用黄色卡片。
+- **分析前必须校验完整性**：统计模式下见上方"⛔ 数据统计强制约束"。非统计模式下：对比 `log_count` 与 `loaded_count`，若 `is_complete` 为 false 或 `loaded_count` 远小于 `log_count`，在飞书卡片中标注"基于 N/M 条采样分析，结论可能不完整"并使用黄色卡片。
 
 ### 飞书输出与结论规则
 
@@ -84,6 +120,7 @@ metadata:
 
 | 意图 | 识别特征 | 查询策略 |
 |------|---------|---------|
+| 数据统计 | 统计、汇总、占比、成功率、总数、计数、健康检查、有多少、多少笔 | 强制 `--require-complete`，见"⛔ 数据统计强制约束" |
 | 流程追踪 | 借款、下单、放款、还款、权益、签约、绑卡、指定 `traceId`/`orderId`/`contractNo` | 路由到业务子 Skill，按入口日志定位 `traceId`，再查全链路 |
 | 健康检查 | 最近有没有异常、无具体标识符 | 使用业务子 Skill 的总览式查询步骤 |
 | SSO/登录 | Argus/CLS 要登录、JANUS/PMP 会话失效 | 使用 `xh-sso-access` |
@@ -104,9 +141,10 @@ metadata:
 
 1. 提取环境、时间范围、标识符 → 分类意图 → 路由到业务子 Skill。
 2. 代码锚点校验（规则见上文"推荐查询锚点校验"），组装 CLS 查询。
-3. `tools/cls_query.py` 查询并提取全文，校验完整性（`loaded_count` vs `log_count`）。
-4. 0 命中时按"无结果排查清单"回退。
-5. 分析日志 → `tools/send_feishu_card.py` 发卡片 → `cls_query.py --close` 关窗口。
+3. **判断是否为统计模式（见"⛔ 数据统计强制约束"）。是 → 加 `--require-complete`。**
+4. `tools/cls_query.py` 查询并提取全文，校验完整性。统计模式下 `error=INCOMPLETE_DATA` 时按建议拆分重试。
+5. 0 命中时按"无结果排查清单"回退。
+6. 分析日志 → `tools/send_feishu_card.py` 发卡片 → `cls_query.py --close` 关窗口。
 
 ## CLS 工具
 
@@ -135,8 +173,23 @@ python3 /Users/user/.hermes/skills/xh-smart/xh-log-lookup/tools/cls_query.py \
 - `expanded_url`：扩大时间范围链接
 - `output_path`：提取的全文路径
 - `log_count`：从\"日志条数\"解析出的结果数（注意：含 `=` 的查询可能退化为全量返回，log_count 不可靠）
+- `completeness_ratio`：加载比例（0.0~1.0），统计模式下必须为 1.0
 - `services`：提取到的服务名
 - `contracts`：提取到的 CK/CS 合同号
+- 统计模式不完整时额外返回：`error`, `error_message`, `action_required`, `suggested_actions`, `PROHIBITION`
+
+### 统计模式查询（强制完整数据）
+
+```bash
+python3 /Users/user/.hermes/skills/xh-smart/xh-log-lookup/tools/cls_query.py \
+  --env prod \
+  --time 'now-1d,now' \
+  --query 'serviceName:"order" AND message:"[借款下单]下单请求结果为"' \
+  --output /tmp/cls_output.txt \
+  --require-complete
+```
+
+统计模式必须使用 `--require-complete`。工具自动加载更多数据（最多 200 次）。仍不完整时返回 `error: INCOMPLETE_DATA` 和拆分建议，此时禁止分析已有数据。
 
 ### 中文查询注入
 
