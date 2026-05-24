@@ -19,24 +19,24 @@ metadata:
 
 **排查陷阱**: 用户反馈的还款页面提示信息（拦截弹窗、不能还款原因）可能来自 H5LoanProject 的 `RepayController.queryRepayOrderInfo()`，不是 order 服务的返回。查不到 order 日志不代表没有拦截——先搜 H5LoanProject 源码确认消息来源。
 
-## 入口覆盖表 + 查询模板
+## 核心流程链路追踪模版
 
 > Phase A 查询统一前缀: `serviceName:"order" AND ...`（还款逻辑也在 order 服务中）
 
-| 场景 | 方法入口 | 日志锚点/关键词 | 推荐查询 | 说明 |
-|------|----------|----------------|----------|------|
-| 还款请求 | `com.xhqb.order.biz.service.impl.ArbitrarilyRepayServiceImpl#sendRepay` | `还款请求`、`支付金额` | `serviceName:"order" AND message:"还款请求" AND message:"orderId:{value}"` | 借助 orderId 或 contractNo 值搜确认完整链路 |
-| 还款状态同步 | `com.xhqb.order.biz.service.impl.RepayOrderServiceImpl#syncRepaySingleOrder` | `同步单个订单还款状态` | `serviceName:"order" AND message:"同步单个订单还款状态" AND message:"订单{orderId}"` | 自动代扣/回调状态同步入口 |
-| 合同还款状态 | `com.xhqb.order.biz.service.impl.RepayOrderServiceImpl#syncRepaySingleOrder` | `合同`、`订单状态`、`账户状态` | `serviceName:"order" AND message:"合同{contractNo}"` | message 中的 contractNo placeholder 不参与锚点校验 |
-| 还款试算 | `com.xhqb.order.biz.service.impl.RepayOrderServiceImpl#computeEarlyRepay` | `[还款试算]` | `serviceName:"order" AND message:"[还款试算]" AND message:"{contractNo}"` | 正常/提前结清试算可能落在不同私有方法 |
-| 任性还款（即期/提前结清） | `com.xhqb.order.biz.service.impl.ArbitrarilyRepayServiceImpl#sendRepay` | `还款请求,保存还款流水` | `serviceName:"order" AND message:"还款请求,保存还款流水" AND message:"{contractNo}"` | 只能证明请求入库，不能证明结清成功 |
-| 聚合支付 | `com.xhqb.order.biz.service.impl.AggregateRepayServiceImpl#aggregateRapaySend` | `[聚合支付]`、`还款请求` | `serviceName:"order" AND message:"[聚合支付]" AND message:"orderId:{value}"` | 0 命中时退回 orderId/contractNo 值搜 |
-| 聚合支付检查 | `com.xhqb.order.biz.service.impl.AggregateRepayServiceImpl#aggregateRepayCheck` | `[聚合支付类型]查询` | `serviceName:"order" AND message:"[聚合支付类型]查询" AND message:"orderId:{value}"` | 模板若不匹配，以当前代码锚点为准 |
-| 好友代付 | `com.xhqb.order.biz.service.impl.AggregateRepayServiceImpl#friendRepayInit` | `[好友代付]` | `serviceName:"order" AND message:"[好友代付]" AND message:"{orderId}"` | 方法名如变更，先搜 `[好友代付]` 锚点 |
-| API代扣 | `com.xhqb.order.biz.service.impl.ArbitrarilyRepayServiceImpl#sendRepay` | `orderId=[{}]是API渠道` | `serviceName:"order" AND message:"orderId=[{value}]"` | 固定片段为 `orderId=[` 和 `是API渠道` |
-| 查询异常 | `com.xhqb.order.biz.service.impl.ArbitrarilyRepayServiceImpl#queryRepayOrderInfo` | `[查询订单信息以及还款金额]` | `serviceName:"order" AND message:"[查询订单信息以及还款金额]" AND message:"cid:{cid}"` | cid 查不到时改用 orderId/contractNo |
-| 返现券 | `com.xhqb.order.biz.service.impl.ArbitrarilyRepayServiceImpl#queryRepayOrderInfo` | `[返现券]计算返现券请求` | `serviceName:"order" AND message:"[返现券]" AND message:"orderId:{value}"` | 还款页面返现券计算入口 |
-| 订单已出账（某期已到还款日） | `com.xhqb.order.biz.service.impl.ArbitrarilyRepayServiceImpl#queryRepayOrderInfo` | `订单id`、`期已出账` | `serviceName:"order" AND message:"{orderId}" AND message:"期已出账"` | 只表示该期到还款日，不等于结清 |
+| 场景 | 方法入口 | 日志锚点/关键词 | 推荐查询 | 关键指标 | 说明 |
+|------|----------|----------------|----------|----------|------|
+| 还款请求 | `com.xhqb.order.biz.service.impl.ArbitrarilyRepayServiceImpl#sendRepay` | `还款请求`、`支付金额` | `serviceName:"order" AND message:"还款请求" AND message:"orderId:{value}"` | | 借助 orderId 或 contractNo 值搜确认完整链路 |
+| 还款状态同步 | `com.xhqb.order.biz.service.impl.RepayOrderServiceImpl#syncRepaySingleOrder` | `同步单个订单还款状态` | `serviceName:"order" AND message:"同步单个订单还款状态" AND message:"订单{orderId}"` | | 自动代扣/回调状态同步入口 |
+| 合同还款状态 | `com.xhqb.order.biz.service.impl.RepayOrderServiceImpl#syncRepaySingleOrder` | `合同`、`订单状态`、`账户状态` | `serviceName:"order" AND message:"合同{contractNo}"` | | message 中的 contractNo placeholder 不参与锚点校验 |
+| 还款试算 | `com.xhqb.order.biz.service.impl.RepayOrderServiceImpl#computeEarlyRepay` | `[还款试算]` | `serviceName:"order" AND message:"[还款试算]" AND message:"{contractNo}"` | | 正常/提前结清试算可能落在不同私有方法 |
+| 任性还款（即期/提前结清） | `com.xhqb.order.biz.service.impl.ArbitrarilyRepayServiceImpl#sendRepay` | `还款请求,保存还款流水` | `serviceName:"order" AND message:"还款请求,保存还款流水" AND message:"{contractNo}"` | | 只能证明请求入库，不能证明结清成功 |
+| 聚合支付 | `com.xhqb.order.biz.service.impl.AggregateRepayServiceImpl#aggregateRapaySend` | `[聚合支付]`、`还款请求` | `serviceName:"order" AND message:"[聚合支付]" AND message:"orderId:{value}"` | | 0 命中时退回 orderId/contractNo 值搜 |
+| 聚合支付检查 | `com.xhqb.order.biz.service.impl.AggregateRepayServiceImpl#aggregateRepayCheck` | `[聚合支付类型]查询` | `serviceName:"order" AND message:"[聚合支付类型]查询" AND message:"orderId:{value}"` | | 模板若不匹配，以当前代码锚点为准 |
+| 好友代付 | `com.xhqb.order.biz.service.impl.AggregateRepayServiceImpl#friendRepayInit` | `[好友代付]` | `serviceName:"order" AND message:"[好友代付]" AND message:"{orderId}"` | | 方法名如变更，先搜 `[好友代付]` 锚点 |
+| API代扣 | `com.xhqb.order.biz.service.impl.ArbitrarilyRepayServiceImpl#sendRepay` | `orderId=[{}]是API渠道` | `serviceName:"order" AND message:"orderId=[{value}]"` | | 固定片段为 `orderId=[` 和 `是API渠道` |
+| 查询异常 | `com.xhqb.order.biz.service.impl.ArbitrarilyRepayServiceImpl#queryRepayOrderInfo` | `[查询订单信息以及还款金额]` | `serviceName:"order" AND message:"[查询订单信息以及还款金额]" AND message:"cid:{cid}"` | | cid 查不到时改用 orderId/contractNo |
+| 返现券 | `com.xhqb.order.biz.service.impl.ArbitrarilyRepayServiceImpl#queryRepayOrderInfo` | `[返现券]计算返现券请求` | `serviceName:"order" AND message:"[返现券]" AND message:"orderId:{value}"` | | 还款页面返现券计算入口 |
+| 订单已出账（某期已到还款日） | `com.xhqb.order.biz.service.impl.ArbitrarilyRepayServiceImpl#queryRepayOrderInfo` | `订单id`、`期已出账` | `serviceName:"order" AND message:"{orderId}" AND message:"期已出账"` | | 只表示该期到还款日，不等于结清 |
 
 ## 用户输入 → 首次查询策略
 
@@ -224,6 +224,12 @@ order, account（合约/账务）, **H5LoanProject**（还款查询 API 入口�
 
 ### 搜索策略
 
-- **消息在源码内**（如"天后可发起"）→ `grep -r '关键词' /Users/user/mingh/workspace/ --include='*.java'`。消息可能不在 order 项目，需要在 H5LoanProject/loki 等其他项目搜索。
+- **消息在源码内**（如"天后可发起"）→ 从映射表`仓库路径`列取各项目路径，`grep -r '关键词' {仓库路径}/ --include='*.java'`。消息可能不在 order 项目，需要在 H5LoanProject/loki 等其他项目搜索。
 - **消息由后端接口返回**（`ResultEnum` 枚举）→ 查 ResultEnum 定义或对应枚举值。
 - **消息由前端写死** → 不在此技能范围，确认后标记为前端静态文案。
+
+## References
+
+- `references/new-customer-early-repay-intercept.md`：新客提前结清拦截（新客提还拦截弹窗规则、`needWeakenSettle()` 代码位置）
+- `references/repay-calc-logic.md`：还款订单列表和逾期金额计算逻辑（`queryRepayOrderList` 入口）
+- `references/settled-period-tracing.md`：已结清期次追踪实战参考（account-swift-app-job 日切信号、出账确认）

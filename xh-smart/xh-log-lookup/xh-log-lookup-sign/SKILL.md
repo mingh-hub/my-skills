@@ -37,19 +37,19 @@ metadata:
 
 手机号和身份证号属于定位入口，不是最终诊断证据；查到关联 cid/orderId/contractNo 后，必须继续用稳定标识符追签约链路。
 
-## 入口关键词
+## 核心流程链路追踪模版
 
 推荐查询执行前先用 `方法入口` 校验代码锚点；不匹配时降级到 `serviceName:"order" AND message:"{标识符}"` 并重新 grep 当前代码。
 
-| 场景 | 方法入口 | 日志锚点/关键词 | 推荐查询 | 说明 |
-|------|----------|----------------|----------|------|
-| 重签查询 | `com.xhqb.order.biz.service.impl.SignServiceImpl#query` | `[签约查询]查询签约场景`、`RESIGN` | `serviceName:"order" AND message:"{cid}" AND message:"RESIGN"` | RESIGN 是稳定枚举，优先用 cid 值搜后过滤 |
-| 签约渠道查询 | `com.xhqb.order.biz.service.impl.SignServiceImpl#query` | `[签约查询]查询签约渠道结果`、`调用支付签约查询结果` | `serviceName:"order" AND message:"{cid}" AND message:"签约查询"` | 支付侧查询日志也可能在 signchannel/CtcfPaymentOService |
-| 签约失效 | `com.xhqb.order.biz.service.handle.InvalidAgreementHandler#process` | `InvalidAgreementHandler`、`支付协议失效`、`签约失效` | `serviceName:"order" AND message:"{cid}" AND message:"签约失效"` | 锚点不匹配时先搜 cid/contractNo |
-| 还款失败触发重签 | `com.xhqb.order.biz.service.impl.OrderOthersServiceImpl#getRepayFailMessage` | `SIGNING_ISSUE`、`getRepayFailMessage` | `serviceName:"order" AND message:"{cid}" AND message:"SIGNING_ISSUE"` | 该入口是失败文案映射，需结合还款失败日志判断 |
-| 代扣/划扣失败 | `com.xhqb.order.biz.service.impl.AgreementPayServiceImpl#cacheNeedReSignInfo` | `cacheNeedReSignInfo`、`扣款失败` | `serviceName:"order" AND message:"{cid}" AND message:"扣款失败"` | cid 查不到时改用 orderId/contractNo |
-| 借款签约失败 | `com.xhqb.order.biz.service.impl.loan.LoanServiceImpl#loanOrder` | `SINGFAIL`、`PRESIGN`、`签约失败`、`contractNo:null` | `serviceName:"order" AND message:"{orderId}" AND message:"签约"` | 和下单链路交叉判断，避免把下单拒绝误判为签约失败 |
-| 全渠道禁闭并发提示 | `com.xhqb.order.biz.service.impl.BeforeLoanOrderServiceImpl#queryFrozenFundListByCid` | `queryFrozenFundListByCid`、`全渠道禁闭结果`、`全渠道禁闭` | `serviceName:"order" AND message:"{cid}" AND message:"全渠道禁闭"` | 全渠道禁闭和重签是并发提示，不直接写因果 |
+| 场景 | 方法入口 | 日志锚点/关键词 | 推荐查询 | 关键指标 | 说明 |
+|------|----------|----------------|----------|----------|------|
+| 重签查询 | `com.xhqb.order.biz.service.impl.SignServiceImpl#query` | `[签约查询]查询签约场景`、`RESIGN` | `serviceName:"order" AND message:"{cid}" AND message:"RESIGN"` | | RESIGN 是稳定枚举，优先用 cid 值搜后过滤 |
+| 签约渠道查询 | `com.xhqb.order.biz.service.impl.SignServiceImpl#query` | `[签约查询]查询签约渠道结果`、`调用支付签约查询结果` | `serviceName:"order" AND message:"{cid}" AND message:"签约查询"` | | 支付侧查询日志也可能在 signchannel/CtcfPaymentOService |
+| 签约失效 | `com.xhqb.order.biz.service.handle.InvalidAgreementHandler#process` | `InvalidAgreementHandler`、`支付协议失效`、`签约失效` | `serviceName:"order" AND message:"{cid}" AND message:"签约失效"` | | 锚点不匹配时先搜 cid/contractNo |
+| 还款失败触发重签 | `com.xhqb.order.biz.service.impl.OrderOthersServiceImpl#getRepayFailMessage` | `SIGNING_ISSUE`、`getRepayFailMessage` | `serviceName:"order" AND message:"{cid}" AND message:"SIGNING_ISSUE"` | | 该入口是失败文案映射，需结合还款失败日志判断 |
+| 代扣/划扣失败 | `com.xhqb.order.biz.service.impl.AgreementPayServiceImpl#cacheNeedReSignInfo` | `cacheNeedReSignInfo`、`扣款失败` | `serviceName:"order" AND message:"{cid}" AND message:"扣款失败"` | | cid 查不到时改用 orderId/contractNo |
+| 借款签约失败 | `com.xhqb.order.biz.service.impl.loan.LoanServiceImpl#loanOrder` | `SINGFAIL`、`PRESIGN`、`签约失败`、`contractNo:null` | `serviceName:"order" AND message:"{orderId}" AND message:"签约"` | | 和下单链路交叉判断，避免把下单拒绝误判为签约失败 |
+| 全渠道禁闭并发提示 | `com.xhqb.order.biz.service.impl.BeforeLoanOrderServiceImpl#queryFrozenFundListByCid` | `queryFrozenFundListByCid`、`全渠道禁闭结果`、`全渠道禁闭` | `serviceName:"order" AND message:"{cid}" AND message:"全渠道禁闭"` | | 全渠道禁闭和重签是并发提示，不直接写因果 |
 
 ## 诊断流程
 

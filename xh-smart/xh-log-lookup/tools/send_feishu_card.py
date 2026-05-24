@@ -59,6 +59,67 @@ FEISHU_MSG_URL = "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_typ
 LEVEL_ICON = {"INFO": "🟢", "WARN": "🟡", "WARNING": "🟡", "ERROR": "🔴"}
 COLOR_MAP = {"red": "red", "yellow": "yellow", "green": "green", "blue": "blue"}
 
+MD_TABLE_RE = re.compile(
+    r'(?:^|\n)'
+    r'(\|[^\n]+\|)\n'          # header row
+    r'(\|[-:\| ]+\|)\n'        # separator row
+    r'((?:\|[^\n]+\|\n?)+)',   # data rows
+    re.MULTILINE
+)
+
+
+def _split_row(row):
+    cells = row.strip().strip('|').split('|')
+    return [c.strip() for c in cells]
+
+
+def parse_markdown_tables(text):
+    segments = []
+    last_end = 0
+    for m in MD_TABLE_RE.finditer(text):
+        before = text[last_end:m.start()].strip()
+        if before:
+            segments.append(("text", before))
+        headers = _split_row(m.group(1))
+        rows = [_split_row(line) for line in m.group(3).strip().splitlines()]
+        segments.append(("table", {"columns": headers, "rows": rows}))
+        last_end = m.end()
+    after = text[last_end:].strip()
+    if after:
+        segments.append(("text", after))
+    return segments
+
+
+def build_table_element(columns, rows):
+    """Build V2 native table element. 
+    Column headers use display_name; internal keys are col_0, col_1, etc.
+    """
+    col_defs = [{"name": f"col_{i}", "display_name": h} for i, h in enumerate(columns)]
+    row_datas = []
+    for row in rows:
+        entry = {}
+        for i in range(len(columns)):
+            entry[f"col_{i}"] = str(row[i]) if i < len(row) else ""
+        row_datas.append(entry)
+    return {
+        "tag": "table",
+        "columns": col_defs,
+        "rows": row_datas
+    }
+
+
+def build_rich_elements(text):
+    segments = parse_markdown_tables(text)
+    if len(segments) == 1 and segments[0][0] == "text":
+        return [{"tag": "div", "text": {"tag": "lark_md", "content": segments[0][1]}}]
+    elements = []
+    for seg_type, seg_data in segments:
+        if seg_type == "text":
+            elements.append({"tag": "div", "text": {"tag": "lark_md", "content": seg_data}})
+        else:
+            elements.append(build_table_element(seg_data["columns"], seg_data["rows"]))
+    return elements
+
 
 def load_env():
     env_path = os.path.expanduser("~/.hermes/.env")
@@ -122,17 +183,11 @@ def build_card(title, color, cls_url, cls_url_expanded, data):
 
     summary_fields = data.get("summary_fields", [])
     if summary_fields:
-        fields = []
-        for item in summary_fields:
-            fields.append({
-                "is_short": True,
-                "text": {"tag": "lark_md", "content": f"**{item['label']}**"}
-            })
-            fields.append({
-                "is_short": True,
-                "text": {"tag": "lark_md", "content": item["value"]}
-            })
-        elements.append({"tag": "div", "fields": fields})
+        lines = [f"**{item['label']}**: {item['value']}" for item in summary_fields]
+        elements.append({
+            "tag": "div",
+            "text": {"tag": "lark_md", "content": "\n".join(lines)}
+        })
         elements.append({"tag": "hr"})
 
     call_chain = data.get("call_chain", [])
@@ -153,49 +208,54 @@ def build_card(title, color, cls_url, cls_url_expanded, data):
     elif log_count == 0 and not summary_fields:
         elements.append({
             "tag": "div",
-            "text": {"tag": "lark_md", "content": "**无匹配日志**\n\n可能原因：查询时间范围不对、serviceName 不匹配、或该请求未产生日志。"}
+            "text": {
+                "tag": "lark_md",
+                "content": "**无匹配日志**\n\n可能原因：查询时间范围不对、serviceName 不匹配、或该请求未产生日志。"
+            }
         })
+
+    table_data = data.get("table_data", [])
+    for td in table_data:
+        headers = td.get("headers", [])
+        rows = td.get("rows", [])
+        if headers and rows:
+            elements.append(build_table_element(headers, rows))
 
     analysis = data.get("analysis", "")
     if analysis:
         elements.append({"tag": "hr"})
+        rich = build_rich_elements(f"**📋 分析结论:**\n{analysis}")
+        elements.extend(rich)
+
+    # V2: buttons → markdown links in a div
+    links = []
+    if cls_url:
+        links.append(f"[🔗 跳转链接]({cls_url})")
+    if cls_url_expanded:
+        links.append(f"[⏱ 扩大查询范围]({cls_url_expanded})")
+    if links:
+        elements.append({"tag": "hr"})
         elements.append({
             "tag": "div",
-            "text": {"tag": "lark_md", "content": f"**📋 分析结论:**\n{analysis}"}
+            "text": {"tag": "lark_md", "content": " · ".join(links)}
         })
 
-    actions = []
-    if cls_url:
-        actions.append({
-            "tag": "button",
-            "text": {"tag": "plain_text", "content": "🔗 跳转链接"},
-            "type": "primary",
-            "url": cls_url
-        })
-    if cls_url_expanded:
-        actions.append({
-            "tag": "button",
-            "text": {"tag": "plain_text", "content": "⏱ 扩大查询范围"},
-            "type": "default",
-            "url": cls_url_expanded
-        })
-    if actions:
-        elements.append({"tag": "hr"})
-        elements.append({"tag": "action", "actions": actions})
-
+    # V2: note → div with small footer text
     note_text = f"🕐 共查询到 {log_count} 条日志 | {time.strftime('%H:%M')}"
     elements.append({
-        "tag": "note",
-        "elements": [{"tag": "plain_text", "content": note_text}]
+        "tag": "div",
+        "text": {"tag": "lark_md", "content": f"_{note_text}_"}
     })
 
     card = {
-        "config": {"wide_screen_mode": True},
+        "schema": "2.0",
         "header": {
             "title": {"tag": "plain_text", "content": title},
             "template": COLOR_MAP.get(color, "blue")
         },
-        "elements": elements
+        "body": {
+            "elements": elements
+        }
     }
     return card
 

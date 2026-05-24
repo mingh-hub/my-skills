@@ -15,18 +15,18 @@ metadata:
 
 order (OrderRouteService, LoanOrderServiceImpl, ReleaseHoldOrderServiceImpl), loki
 
-## 入口覆盖表 + 查询模板
+## 核心流程链路追踪模版
 
-| 场景 | 方法入口 | 日志锚点/关键词 | 推荐查询 | 说明 |
-|------|----------|----------------|----------|------|
-| 资金路由 | `com.xhqb.order.biz.service.impl.LoanOrderServiceImpl#loanOrder` | `[资金路由]` | `serviceName:"order" AND message:"[资金路由]" AND message:"orderId:{orderId}"` | 资金路由主链路 |
-| 自动路由 | `com.xhqb.order.biz.service.impl.LoanOrderServiceImpl#loanOrder` | `资金自动路由` | `serviceName:"order" AND message:"资金自动路由" AND message:"{orderId}"` | 代码里前缀含动态订单/期数字段，避免硬搜完整中括号 |
-| 放款成功 | `com.xhqb.order.biz.service.event.marketdeduct.MarketDeductEventListen#onApplicationEvent` | `[放款成功]` | `serviceName:"order" AND message:"[放款成功]" AND message:"{orderId}"` | 放款成功后的权益/划扣事件 |
-| 放款流程 | `com.xhqb.order.biz.service.impl.SpecFundCreditServiceImpl#loanProcess` | `[放款流程]` | `serviceName:"order" AND message:"[放款流程]" AND message:"{orderId}"` | 特定资方额度修改放款流程 |
-| 特项额度 | `com.xhqb.order.biz.service.impl.SpecFundCreditServiceImpl#saveSpecFundCredit` | `[特项额度]`、`客户` | `serviceName:"order" AND message:"[特项额度]" AND message:"客户:{cid}"` | 查询/保存/修改额度共用锚点 |
-| 解H | `com.xhqb.order.biz.service.impl.ReleaseHoldOrderServiceImpl#releaseHoldOrder` | `[新解H]` | `serviceName:"order" AND message:"[新解H]" AND message:"[{orderId}]"` | 解H job 和订单维度处理日志很多，先按 orderId 值搜 |
-| 拒就赔JOB | `com.xhqb.order.biz.service.impl.RejectCompensateServiceImpl#handleRecordJob` | `[拒就赔JOB]` | `serviceName:"order" AND message:"[拒就赔JOB]" AND message:"orderId:{orderId}"` | 拒就赔解H处理 |
-| 提前结清 | `com.xhqb.order.biz.service.impl.others.CtcfService#queryEarlySettleGetFeeDetail` | `[提前结清]` | `serviceName:"order" AND message:"[提前结清]" AND message:"{contractNo}"` | 资方提前结清金额查询 |
+| 场景 | 方法入口 | 日志锚点/关键词 | 推荐查询 | 关键指标 | 说明 |
+|------|----------|----------------|----------|----------|------|
+| 资金路由 | `com.xhqb.order.biz.service.impl.LoanOrderServiceImpl#loanOrder` | `[资金路由]` | `serviceName:"order" AND message:"[资金路由]" AND message:"orderId:{orderId}"` | | 资金路由主链路 |
+| 自动路由 | `com.xhqb.order.biz.service.impl.LoanOrderServiceImpl#loanOrder` | `资金自动路由` | `serviceName:"order" AND message:"资金自动路由" AND message:"{orderId}"` | | 代码里前缀含动态订单/期数字段，避免硬搜完整中括号 |
+| 放款成功 | `com.xhqb.order.biz.service.event.marketdeduct.MarketDeductEventListen#onApplicationEvent` | `[放款成功]` | `serviceName:"order" AND message:"[放款成功]" AND message:"{orderId}"` | | 放款成功后的权益/划扣事件 |
+| 放款流程 | `com.xhqb.order.biz.service.impl.SpecFundCreditServiceImpl#loanProcess` | `[放款流程]` | `serviceName:"order" AND message:"[放款流程]" AND message:"{orderId}"` | | 特定资方额度修改放款流程 |
+| 特项额度 | `com.xhqb.order.biz.service.impl.SpecFundCreditServiceImpl#saveSpecFundCredit` | `[特项额度]`、`客户` | `serviceName:"order" AND message:"[特项额度]" AND message:"客户:{cid}"` | | 查询/保存/修改额度共用锚点 |
+| 解H | `com.xhqb.order.biz.service.impl.ReleaseHoldOrderServiceImpl#releaseHoldOrder` | `[新解H]` | `serviceName:"order" AND message:"[新解H]" AND message:"[{orderId}]"` | | 解H job 和订单维度处理日志很多，先按 orderId 值搜 |
+| 拒就赔JOB | `com.xhqb.order.biz.service.impl.RejectCompensateServiceImpl#handleRecordJob` | `[拒就赔JOB]` | `serviceName:"order" AND message:"[拒就赔JOB]" AND message:"orderId:{orderId}"` | | 拒就赔解H处理 |
+| 提前结清 | `com.xhqb.order.biz.service.impl.others.CtcfService#queryEarlySettleGetFeeDetail` | `[提前结清]` | `serviceName:"order" AND message:"[提前结清]" AND message:"{contractNo}"` | | 资方提前结清金额查询 |
 
 ## 用户输入 → 首次查询策略
 

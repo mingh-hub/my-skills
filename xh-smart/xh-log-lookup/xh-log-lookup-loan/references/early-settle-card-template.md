@@ -123,16 +123,16 @@ python3 /Users/user/.hermes/skills/xh-smart/xh-log-lookup/tools/send_feishu_card
 
 | 参数 | 说明 | 示例 |
 |------|------|------|
-| `{traceId}` | 全链路 traceId | `d3acd9c5b5207e00` |
-| `{contractNo}` | 合同号 | `CK202510210000455` |
-| `{businessNo}` | 业务编码 | `20260519000000013001` |
-| `{资方名}` | 资金方简称 | 中腾信、马上消费、维信等 |
-| `{资方域名}` | 资金方 gateway 域名 | `sit.ctcfin.com` |
-| `{errMsg}` | 资方返回的错误描述 | `合同号:CK202510210000455的有效账户不存在` |
-| `{环境}` | 生产/测试 | 测试 |
-| `{topic名}` | CLS topic 显示名 | `logsvr-test-标准+低频` |
 | `{时间范围}` | 日志时间范围 | `05-19 14:06:33~14:06:36` |
 | `{N}` | 命中日志条数 | `112` |
+| `{businessNo}` | 业务编码 | `20260519000000013001` |
+| `{errMsg}` | 资方返回的错误描述 | `合同号:CK202510210000455的有效账户不存在` |
+| `{contractNo}` | 合同号 | `CK202510210000455` |
+| `{traceId}` | 全链路 traceId | `d3acd9c5b5207e00` |
+| `{topic名}` | CLS topic 显示名 | `logsvr-test-标准+低频` |
+| `{资方域名}` | 资金方 gateway 域名 | `sit.ctcfin.com` |
+| `{环境}` | 生产/测试 | 测试 |
+| `{资方名}` | 资金方简称 | 中腾信、马上消费、维信等 |
 
 ## 颜色规则
 
