@@ -14,11 +14,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+from skill_config import SKILL_ROOT, read_project_paths
 
-DEFAULT_SOURCE_ROOTS = [
-    Path("/Users/user/mingh/workspace/order"),
-    Path("/Users/user/mingh/workspace/account"),
-]
+
+def _default_source_roots() -> list[Path]:
+    return [p for p in read_project_paths().values() if p.exists()]
 
 
 @dataclass
@@ -345,7 +345,7 @@ def main() -> int:
     else:
         skill_paths = [Path(s) for s in args.skill]
 
-    source_roots = args.source_root or [root for root in DEFAULT_SOURCE_ROOTS if root.exists()]
+    source_roots = args.source_root or [root for root in _default_source_roots() if root.exists()]
     class_index = build_class_index(source_roots)
 
     rows: list[AnchorRow] = []

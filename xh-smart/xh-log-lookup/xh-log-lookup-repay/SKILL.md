@@ -224,7 +224,7 @@ order, account（合约/账务）, **H5LoanProject**（还款查询 API 入口�
 
 ### 搜索策略
 
-- **消息在源码内**（如"天后可发起"）→ `grep -r '关键词' /Users/user/mingh/workspace/ --include='*.java'`。消息可能不在 order 项目，需要在 H5LoanProject/loki 等其他项目搜索。
+- **消息在源码内**（如"天后可发起"）→ 从映射表`仓库路径`列取各项目路径，`grep -r '关键词' {仓库路径}/ --include='*.java'`。消息可能不在 order 项目，需要在 H5LoanProject/loki 等其他项目搜索。
 - **消息由后端接口返回**（`ResultEnum` 枚举）→ 查 ResultEnum 定义或对应枚举值。
 - **消息由前端写死** → 不在此技能范围，确认后标记为前端静态文案。
 

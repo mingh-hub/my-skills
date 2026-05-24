@@ -14,21 +14,23 @@ metadata:
 处理生产/测试环境日志查询、业务异常排查、CLS 结果及根因分析和**飞书卡片输出**。主控只负责意图分类、路由、强制约束和工具调用；业务细节在子 Skill 和 references 中。
 
 ## 日志服务名和项目名映射关系表
-| serviceName | 项目名 |
-|----|----|
-|`order`|`order`|
-|`order-batch`|`order`|
-|`order-batch-timing`|`order`|
-|`h5-loan`|`H5LoanProject`|
-|`protocol`|`protocol`|
-|`protocol-batch`|`protocol`|
-|`protocol-batch-timing`|`protocol`|
-|`cif`|`cif`|
-|`account`|`account`|
-|`datainquiry`|`data-inquiry`|
-|`loki-webapp`|`loki`|
-|`weixin_h5api`|`weixin-h5api`|
-|`appServer`|`app-server`|
+
+`仓库路径`列为空或路径不存在时，执行 `tools/resolve_workspace.py` 自动探测并更新映射表。
+| serviceName | 项目名 | 仓库路径 |
+|----|----|----|
+|`order`|`order`|`/Users/hisense/Documents/workspace/order`|
+|`order-batch`|`order`|`/Users/hisense/Documents/workspace/order`|
+|`order-batch-timing`|`order`|`/Users/hisense/Documents/workspace/order`|
+|`h5-loan`|`H5LoanProject`|`/Users/hisense/Documents/workspace/H5LoanProject`|
+|`protocol`|`protocol`|`/Users/hisense/Documents/workspace/protocol`|
+|`protocol-batch`|`protocol`|`/Users/hisense/Documents/workspace/protocol`|
+|`protocol-batch-timing`|`protocol`|`/Users/hisense/Documents/workspace/protocol`|
+|`cif`|`cif`|`/Users/hisense/Documents/workspace/cif`|
+|`account`|`account`|`/Users/hisense/Documents/workspace/account`|
+|`datainquiry`|`data-inquiry`|`/Users/hisense/Documents/workspace/data-inquiry`|
+|`loki-webapp`|`loki`|`/Users/hisense/Documents/workspace/loki`|
+|`weixin-h5api`|`weixin_h5api`|`/Users/hisense/Documents/workspace/weixin_h5api`|
+|`app-server`|`appServer`|`/Users/hisense/Documents/workspace/appServer`|
 
 ## 强制规则
 
@@ -69,13 +71,16 @@ metadata:
 流程追踪（根因分析、单笔排查）不要求 `--require-complete`。部分数据足以定位根因时，可正常分析。
 
 ### 查询方法
+- **查询前置条件（强制）**：
+  - **用户提供了 traceId**：可以直接到日志平台用 `traceId:"{value}"` 查询
+  - **用户未提供 traceId**：**必须先分析本地业务代码**，理解业务流程和日志打印逻辑后，再构造查询到日志平台查询。禁止以任何理由（包括路径不匹配、嫌麻烦等）跳过本地业务分析
 - **环境默认规则**：用户未指定环境时，**必须查生产环境（prod）**。只有用户明确说"查测试环境"时才使用测试 topic。禁止自行假设或优先查测试环境。
 - **traceId 查询与提取**：
   - **用户提供 traceId**：直接执行 `traceId:"{value}"`（不加 `serviceName`）；查不到时扩大时间：`now-1d,now` → `now-7d,now` → `now-30d,now`
   - **用户未提供 traceId**：按后续步骤用业务标识符定位日志后，从提取的 innerText 中识别 `traceid` 列值（16 位 hex，如 `110e6550d81fb1bc`），再执行 `traceId:"{提取值}"` 做全链路分析
   - **traceId ≠ TID**：两者是不同的索引字段，不要混淆。以 `traceid` 列为准
   - 日志无法获取明确结果时可结合项目代码
-- 每次会话首次执行**代码锚点**校验前，按 `references/update-master-branch.md` 更新对应服务仓库的 master 分支（路径：`/Users/user/mingh/workspace/{服务名}`，服务名参考上面`日志服务名和项目名映射关系表`）
+- 每次会话首次执行**代码锚点**校验前，按 `references/update-master-branch.md` 更新对应服务仓库的 master 分支（路径见映射表`仓库路径`列）
 - 分析要查的数据是否在子模块的流程追踪入口，是的话可以通过日志锚点查询，不是的话分析本地项目路径，确认查询`sql`,服务名参考上面`日志服务名和项目名映射关系表`；子模块入口表格里的推荐查询只是通过代码锚点校验后的首查模板，不是唯一真相。
 - 执行入口表格推荐查询前，先校验 `方法入口`、`serviceName` 和固定 `message` 片段是否仍能和当前代码匹配；可用 `tools/validate_query_anchors.py` 辅助检查。
 - 标识符值优先直接放入 `message:\"{value}\"`，禁止加 `cid:`、`orderId:`、`contractNo:`

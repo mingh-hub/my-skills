@@ -4,7 +4,7 @@ Tracing `FundDecisionInfoService#queryFundDecisionInfo` issues through CLS logs.
 
 ## Overview
 
-`FundDecisionInfoService` is in **data-inquiry** project (`/Users/user/mingh/workspace/data-inquiry`), Dubbo provider `com.xhqb.datainquiry.common.service.api.FundDecisionInfoService`.
+`FundDecisionInfoService` is in **data-inquiry** project（路径见映射表`仓库路径`列）, Dubbo provider `com.xhqb.datainquiry.common.service.api.FundDecisionInfoService`.
 
 ## Key Code Locations
 
