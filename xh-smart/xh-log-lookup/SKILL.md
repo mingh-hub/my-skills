@@ -77,7 +77,7 @@ metadata:
 - **环境默认规则**：用户未指定环境时，**必须查生产环境（prod）**。只有用户明确说"查测试环境"时才使用测试 topic。禁止自行假设或优先查测试环境。
 - **traceId 查询与提取**：
   - **用户提供 traceId**：直接执行 `traceId:"{value}"`（不加 `serviceName`）；查不到时扩大时间：`now-1d,now` → `now-7d,now` → `now-30d,now`
-  - **用户未提供 traceId**：按后续步骤用业务标识符定位日志后，从提取的 innerText 中识别 `traceid` 列值（16 位 hex，如 `110e6550d81fb1bc`），再执行 `traceId:"{提取值}"` 做全链路分析
+  - **用户未提供 traceId**：按后续步骤用业务标识符定位日志后，从提取的 innerText 中识别 `traceid` 列值（通常为 16 位或 32 位 hex，如 `110e6550d81fb1bc`、`b4d5cc63c42611adb4d5cc63c42611ad`），再执行 `traceId:"{提取值}"` 做全链路分析；不要自行截断成前 16 位
   - **traceId ≠ TID**：两者是不同的索引字段，不要混淆。以 `traceid` 列为准
   - 日志无法获取明确结果时可结合项目代码
 - 每次会话首次执行**代码锚点**校验前，按 `references/update-master-branch.md` 更新对应服务仓库的 master 分支（路径见映射表`仓库路径`列）
