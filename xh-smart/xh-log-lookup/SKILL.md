@@ -146,7 +146,7 @@ metadata:
 
 1. 提取环境、时间范围、标识符 → 分类意图 → 路由到业务子 Skill。
 2. 代码锚点校验（规则见上文"推荐查询锚点校验"），组装 CLS 查询。
-3. **判断是否为统计模式（见"⛔ 数据统计强制约束"）。是 → 加 `--require-complete`。**
+3. **判断是否为统计模式（见"数据统计强制约束"）。是 → 加 `--require-complete`。**
 4. `tools/cls_query.py` 查询并提取全文，校验完整性。统计模式下 `error=INCOMPLETE_DATA` 时按建议拆分重试。
 5. 0 命中时按"无结果排查清单"回退。
 6. 分析日志 → `tools/send_feishu_card.py` 发卡片 → `cls_query.py --close` 关窗口。
