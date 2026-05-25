@@ -41,16 +41,16 @@ metadata:
 |------|----------|----------|----------|
 | 还款前可还时间校验 | `com.xhqb.h5loan.biz.service.controller.RepayController#checkRepayAvailableTime` | `校验是否可还款` | `serviceName:"h5-loan" AND message:"校验是否可还款"` |
 | 列表入口还款 | `com.xhqb.h5loan.biz.service.controller.RepayController#sendRepay` | `[还款请求]客户cid` / `还款请求,request` | `serviceName:"h5-loan" AND message:"还款请求"` |
-| 客户聚合支付入口（新） | `com.xhqb.h5loan.biz.service.controller.AggregateRepayController#aggrAutoSendRepay` | `aggrAutoSendRepay` / `[聚合支付]发起支付result` | `serviceName:"h5-loan" AND message:"aggrAutoSendRepay"` |
-| 客户聚合支付（老）/一键还款 | `com.xhqb.h5loan.biz.service.controller.AggregateRepayController#aggregateRepaySend` | `aggregateRepaySend` / `[聚合支付]客户发起还款` | `serviceName:"h5-loan" AND message:"aggregateRepaySend"` |
+| 客户聚合支付入口（新） | `com.xhqb.h5loan.biz.service.controller.AggregateRepayController#aggrAutoSendRepay` | `aggrAutoSendRepay` / `[聚合支付]发起支付result` | `serviceName:"h5-loan" AND message:"aggrAutoSendRepay" AND message:"{contractNo}"` |
+| 客户聚合支付（老）/一键还款 | `com.xhqb.h5loan.biz.service.controller.AggregateRepayController#aggregateRepaySendNew` | `aggregateRepaySendNew` / `[聚合支付]客户发起还款` | `serviceName:"h5-loan" AND message:"aggregateRepaySend" AND message:"{orderId}"` |
 
 ### API 客户
 
 | 场景 | 方法入口 | 日志锚点 | 推荐查询 |
 |------|----------|----------|----------|
 | 还款试算 | `com.xhqb.order.common.service.api.RepayService#trial` | `trial` / 试算日志 | 先查 `traceId`，没有则按 `orderId` 宽搜 |
-| API 还款试算 | `com.xhqb.order.common.service.RepayOrderService#apiRepaymentRequest` | `[还款请求]` / `apiRepaymentRequest` | `serviceName:"order" AND message:"[还款请求]" AND message:"{orderId}"` |
-| API 发起还款 | `com.xhqb.order.common.service.ApiRepayService#sendRepay` | `orderId=[{orderId}]是API渠道` / `还款请求` | `serviceName:"order" AND message:"orderId=[{orderId}]" AND message:"API渠道"` |
+| API 还款试算 | `com.xhqb.order.common.service.RepayOrderService#apiRepaymentRequest` | `[还款请求]还款请求为` | `serviceName:"order" AND message:"[还款请求]还款请求为" AND message:"{orderId}"` |
+| API 发起还款 | `com.xhqb.order.common.service.ApiRepayService#sendRepay` | `com.xhqb.order.common.service.ApiRepayService.sendRepay` / `还款请求` | `serviceName:"order" AND message:"com.xhqb.order.common.service.ApiRepayService.sendRepay" AND message:"{orderId}"` |
 
 ## 账务批扣与结果通知
 
@@ -85,7 +85,7 @@ metadata:
 | `提前结清于资金到账N天后可发起` | `H5LoanProject.RepayController#queryRepayOrderInfo` / `needWeakenSettle` | 新客/资方规则拦截 |
 | `系统维护中，请在[...]后还款` | `order` 侧时间限制 | 黑暗期拦截 |
 | `当前不支持提前还款` | `order` 侧日期限制 | 提前还款日期限制 |
-| 账务校验拦截 | `order` 侧账务校验 | 可能来自 `account` / `loki` |
+| 账务校验拦截 | `order` 调账务服务校验 | 拦截结果由 `order` 调用账务侧服务后返回，账务服务不属于订单组内服务 |
 
 ## 推荐首查
 
