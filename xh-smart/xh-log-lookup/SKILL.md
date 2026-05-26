@@ -45,25 +45,30 @@ metadata:
 
 健康检查（见子 Skill 的 Step 0-4）**始终**属于统计模式。
 
-#### 统计模式三条铁律
+#### 统计模式完整性铁律
 
-1. **必须使用 `--require-complete`**：统计模式下调用 `cls_query.py` 时，必须加 `--require-complete`。无此标志的查询结果禁止用于任何数值统计。
+1. **完整性优先，Hermes 优先**：统计模式下必须拿到完整数据后才能做数值结论。优先用 Hermes 内置浏览器打开完整 CLS URL、加载全部结果并校验完整性；不要为了使用 `--require-complete` 直接运行会打开本地 Chrome 的 `cls_query.py`。
 
-2. **完整性关卡**：工具返回后，先检查 JSON 是否存在 `"error": "INCOMPLETE_DATA"`。若存在：
+2. **本地 Chrome 备用路径才用 `--require-complete`**：只有明确切换到本地 Chrome 备用路径并调用 `cls_query.py` 执行/提取时，才必须加 `--require-complete`。无此标志的 `cls_query.py` 执行结果禁止用于任何数值统计。
+
+3. **完整性关卡**：先检查结果是否完整；如果 `cls_query.py` 返回 JSON，检查是否存在 `"error": "INCOMPLETE_DATA"`。若存在：
    - 禁止对已加载数据做任何计数、汇总、占比计算
    - 必须按 `suggested_actions` 拆分查询后重试
    - 拆分后仍不完整：飞书卡片用黄色（yellow），所有数值结论加"（采样值，非精确统计）"后缀
 
-3. **禁止跳过关卡**：只要 `is_complete` 为 false，统计模式下所有百分比、总数、成功率结论都无效。不存在"先看看数据再说"——要么数据完整，要么先拆分。
+4. **禁止跳过关卡**：只要 `is_complete` 为 false，统计模式下所有百分比、总数、成功率结论都无效。不存在"先看看数据再说"——要么数据完整，要么先拆分。
 
 #### 统计模式工作流
 
 ```
-用户请求 → 识别统计关键词 → cls_query.py --require-complete
-  → is_complete=true → 正常分析，输出精确统计
-  → error=INCOMPLETE_DATA → 按 suggested_actions 拆分
-    → 每段都 --require-complete → 合并完整段数据 → 输出统计
-    → 某段仍不完整 → 黄色卡片 + "采样值" 标注
+用户请求 → 识别统计关键词 → 构造完整 CLS URL（可用 cls_query.py --no-browser）
+  → Hermes 内置浏览器打开 URL → 加载更多直到完整 → 输出精确统计
+  → Hermes 不可用/页面操作失败/需要批量自动提取
+    → 切换本地 Chrome 备用路径：cls_query.py --require-complete
+      → is_complete=true → 正常分析，输出精确统计
+      → error=INCOMPLETE_DATA → 按 suggested_actions 拆分
+        → 每段都 --require-complete → 合并完整段数据 → 输出统计
+        → 某段仍不完整 → 黄色卡片 + "采样值" 标注
 ```
 
 #### 非统计模式
@@ -108,9 +113,9 @@ metadata:
 
 ### 浏览器和 CLS
 
-- CLS/Argus URL 只能通过用户本地 Chrome + AppleScript 访问，禁止使用 Hermes 云端 `browser_*` 工具访问 `argus.xhdev.xyz` 或 `datasight-*.clsconsole.tencent-cloud.com`。
-- 禁止默认操作 `active tab of front window`。首次查询创建新的 Chrome window，后续查询复用该窗口，通过 window id 定向操作。发送飞书卡片后调用 `tools/cls_query.py --close` 关闭窗口。若页面跳转到 argus.xhdev.xyz 登录页，提示用户在 Chrome 中完成登录后重试。
-- 优先使用 `tools/cls_query.py` 构造 URL、打开专用窗口、加载更多、提取 `document.body.innerText`。
+- 优先用 Hermes 内置浏览器直接打开 CLS URL。URL 必须包含 `topic_id`、`time`、`queryBase64`，避免依赖页面默认状态。
+- 本地 Chrome + AppleScript 是备用路径：当 Hermes 登录态不可用、页面操作失败、需要脚本自动加载更多或批量全文提取时，使用 `tools/cls_query.py`。
+- 使用本地 Chrome 备用路径时，禁止默认操作 `active tab of front window`。首次查询创建新的 Chrome window，后续查询复用该窗口，通过 window id 定向操作；调查结束后调用 `tools/cls_query.py --close` 关闭窗口。
 - 不要用 `document.body.innerText.substring(0,N)` 判断结果；CLS 日志数据在页面文本后部。
 - `traceId` 查询也可能超过 20 条；必须加载全部数据进行解析
 - **分析前必须校验完整性**：统计模式下见上方"⛔ 数据统计强制约束"。非统计模式下：对比 `log_count` 与 `loaded_count`，若 `is_complete` 为 false 或 `loaded_count` 远小于 `log_count`，在飞书卡片中标注"基于 N/M 条采样分析，结论可能不完整"并使用黄色卡片。
@@ -125,7 +130,7 @@ metadata:
 
 | 意图 | 识别特征 | 查询策略 |
 |------|---------|---------|
-| 数据统计 | 统计、汇总、占比、成功率、总数、计数、健康检查、有多少、多少笔 | 强制 `--require-complete`，见"⛔ 数据统计强制约束" |
+| 数据统计 | 统计、汇总、占比、成功率、总数、计数、健康检查、有多少、多少笔 | Hermes 优先并强制完整性；本地 Chrome 备用路径才用 `--require-complete` |
 | 流程追踪 | 借款、下单、放款、还款、权益、签约、绑卡、指定 `traceId`/`orderId`/`contractNo` | 路由到业务子 Skill，按入口日志定位 `traceId`，再查全链路 |
 | 健康检查 | 最近有没有异常、无具体标识符 | 使用业务子 Skill 的总览式查询步骤 |
 | SSO/登录 | Argus/CLS 要登录、JANUS/PMP 会话失效 | 使用 `xh-sso-access` |
@@ -146,14 +151,16 @@ metadata:
 
 1. 提取环境、时间范围、标识符 → 分类意图 → 路由到业务子 Skill。
 2. 代码锚点校验（规则见上文"推荐查询锚点校验"），组装 CLS 查询。
-3. **判断是否为统计模式（见"数据统计强制约束"）。是 → 加 `--require-complete`。**
-4. `tools/cls_query.py` 查询并提取全文，校验完整性。统计模式下 `error=INCOMPLETE_DATA` 时按建议拆分重试。
+3. **判断是否为统计模式（见"数据统计强制约束"）。是 → Hermes 优先加载完整结果；仅本地 Chrome 备用路径加 `--require-complete`。**
+4. 构造 CLS URL 后优先用 Hermes 内置浏览器查询；必要时用 `tools/cls_query.py` 执行/提取全文，校验完整性。统计模式下 `error=INCOMPLETE_DATA` 时按建议拆分重试。
 5. 0 命中时按"无结果排查清单"回退。
-6. 分析日志 → `tools/send_feishu_card.py` 发卡片 → `cls_query.py --close` 关窗口。
+6. 分析日志 → `tools/send_feishu_card.py` 发卡片。仅使用本地 Chrome 备用窗口时，最后调用 `cls_query.py --close` 关窗口。
 
 ## CLS 工具
 
 ### 构造 URL，不打开浏览器
+
+Hermes 优先路径下，ASCII 查询（包括健康检查 Step 0 / 统计查询）先生成 CLS URL，再用 Hermes 内置浏览器打开。`cls_query.py` 默认只构造 URL；只有显式加 `--use-local-chrome` 才会打开本地 Chrome。
 
 ```bash
 python3 /Users/user/.hermes/skills/xh-smart/xh-log-lookup/tools/cls_query.py \
@@ -162,28 +169,29 @@ python3 /Users/user/.hermes/skills/xh-smart/xh-log-lookup/tools/cls_query.py \
   --no-browser
 ```
 
-### 打开专用 Chrome 窗口并提取文本
+### 备用：本地 Chrome 专用窗口并提取文本
 
 ```bash
 python3 /Users/user/.hermes/skills/xh-smart/xh-log-lookup/tools/cls_query.py \
   --env prod \
   --time 'now-7d,now' \
   --query 'traceId:"37426d42fdc699d1"' \
-  --output /tmp/cls_output.txt
+  --output /tmp/cls_output.txt \
+  --use-local-chrome
 ```
 
 工具输出 JSON，包含：
 
 - `cls_url`：本次查询跳转链接
 - `expanded_url`：扩大时间范围链接
-- `output_path`：提取的全文路径
+- `output_path`：本地 Chrome 备用路径提取的全文路径
 - `log_count`：从\"日志条数\"解析出的结果数（注意：含 `=` 的查询可能退化为全量返回，log_count 不可靠）
 - `completeness_ratio`：加载比例（0.0~1.0），统计模式下必须为 1.0
 - `services`：提取到的服务名
 - `contracts`：提取到的 CK/CS 合同号
 - 统计模式不完整时额外返回：`error`, `error_message`, `action_required`, `suggested_actions`, `PROHIBITION`
 
-### 统计模式查询（强制完整数据）
+### 备用：本地 Chrome 统计模式查询（强制完整数据）
 
 ```bash
 python3 /Users/user/.hermes/skills/xh-smart/xh-log-lookup/tools/cls_query.py \
@@ -191,14 +199,15 @@ python3 /Users/user/.hermes/skills/xh-smart/xh-log-lookup/tools/cls_query.py \
   --time 'now-1d,now' \
   --query 'serviceName:"order" AND message:"[借款下单]下单请求结果为"' \
   --output /tmp/cls_output.txt \
-  --require-complete
+  --require-complete \
+  --use-local-chrome
 ```
 
-统计模式必须使用 `--require-complete`。工具自动加载更多数据（最多 200 次）。仍不完整时返回 `error: INCOMPLETE_DATA` 和拆分建议，此时禁止分析已有数据。
+仅在 Hermes 不可用、页面操作失败或需要批量自动提取时使用此备用路径。统计模式下调用 `cls_query.py` 执行/提取必须使用 `--require-complete`；工具自动加载更多数据（最多 200 次）。仍不完整时返回 `error: INCOMPLETE_DATA` 和拆分建议，此时禁止分析已有数据。
 
 ### 中文查询注入
 
-queryBase64 不支持非 ASCII。中文查询需先用 ASCII URL 加载页面，再通过 AppleScript + `String.fromCharCode()` + `execCommand('insertText')` 注入。详见 `references/cls-react-contenteditable-injection.md`。
+queryBase64 不支持非 ASCII。中文查询需先用 ASCII URL 加载页面，再通过页面查询框注入或从提取全文中二次过滤；本地 Chrome 备用路径可使用 AppleScript + `String.fromCharCode()` + `execCommand('insertText')` 注入。详见 `references/cls-react-contenteditable-injection.md`。
 
 ### 校验入口表锚点
 
@@ -254,7 +263,7 @@ python3 tools/send_feishu_card.py \
 ## References
 
 - `references/update-master-branch.md`：更新本地 `master` 分支代码
-- `references/cls-local-chrome-access.md`：本地 Chrome 专用窗口访问 CLS
+- `references/cls-local-chrome-access.md`：备用：本地 Chrome 专用窗口访问 CLS
 - `references/cls-dom-extraction.md`：全文提取、加载更多、CK/CS 合同号解析
 - `references/cls-query-pitfalls.md`：CLS 高频坑和恢复方式
 - `references/chinese-queryBase64-experiments.md`：中文 queryBase64 限制

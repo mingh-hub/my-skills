@@ -4,7 +4,7 @@
 
 ## 原则
 
-通过 osascript + 本地 Chrome 操作 CLS 页面，不使用 browser_* 工具。所有示例都必须使用已记录的 `CLS_WINDOW_ID`，不要操作用户当前的前台窗口。
+优先用 Hermes 内置浏览器在 CLS 直达 URL 页面提取全文、点击"加载更多"并校验完整性。本文件中的 osascript 示例仅适用于本地 Chrome 备用路径；使用这些示例时必须使用已记录的 `CLS_WINDOW_ID`，不要操作用户当前的前台窗口。
 
 ## ⚠️ 致命坑：innerText 前缀 ≠ 数据存在性
 
@@ -20,14 +20,14 @@
 
 **正确做法**：
 ```bash
-# 提取全页文本，保存到文件
+# 本地 Chrome 备用路径：提取全页文本，保存到文件
 osascript -e "tell app \"Google Chrome\" to execute active tab of (first window whose id is ${CLS_WINDOW_ID}) javascript \"document.body.innerText\"" > /tmp/cls_output.txt 2>&1
 
 # 在文件末尾查看数据
 tail -100 /tmp/cls_output.txt
 ```
 
-## 基础提取
+## 基础提取（本地 Chrome 备用路径）
 
 ```bash
 osascript -e "tell app \"Google Chrome\" to execute active tab of (first window whose id is ${CLS_WINDOW_ID}) javascript \"document.body.innerText\"" > /tmp/cls_output.txt
@@ -38,7 +38,7 @@ osascript -e "tell app \"Google Chrome\" to execute active tab of (first window 
 CLS 页面默认只显示 20 条结果。对于数百到数千条的结果集，需要反复点击"加载更多"：
 
 ```bash
-# 找到并点击"加载更多"按钮（<button class="sdk-cls-btn sdk-cls-btn--link">）
+# 本地 Chrome 备用路径：找到并点击"加载更多"按钮（<button class="sdk-cls-btn sdk-cls-btn--link">）
 for i in $(seq 1 10); do
   osascript -e "tell app \"Google Chrome\" to execute active tab of (first window whose id is ${CLS_WINDOW_ID}) javascript \
     \"[...document.querySelectorAll('button')].find(b => b.textContent.trim() === '加载更多')?.click()\""

@@ -63,7 +63,7 @@ metadata:
 
 ## 健康检查
 
-无具体标识符时，按 `Step 0→1→2→3→4`。**Step 0 是"异常告警"查询的必做步骤**，常规健康检查也建议先执行 Step 0 排除非 [借款下单] 类异常。**健康检查属于统计模式，所有 Step 必须使用 `--require-complete`。**
+无具体标识符时，按 `Step 0→1→2→3→4`。**Step 0 是"异常告警"查询的必做步骤**，常规健康检查也建议先执行 Step 0 排除非 [借款下单] 类异常。**健康检查属于统计模式，所有 Step 必须按主控 `xh-log-lookup` 的统计完整性规则执行：Hermes 优先加载完整结果；仅切换到本地 Chrome 备用路径时才使用 `cls_query.py --require-complete --use-local-chrome`。**
 
 Step 0 使用 `level:"ERROR"` 通用查询，不依赖代码锚点，可直接执行。Step 1-3 的中文日志前缀（`[借款下单]下单请求为` 等）依赖代码，首次使用前必须用 `validate_query_anchors.py` 或 grep 本地代码确认锚点仍存在。
 
