@@ -259,7 +259,7 @@ def overall_status(result: dict[str, object]) -> str:
 def print_text(results: list[dict[str, object]]) -> None:
     for result in results:
         status = overall_status(result)
-        print(f"[{status}] {Path(str(result['skill'])).parent.name} / {result['scene']}")
+        print(f"[{status}] {display_module_name(Path(str(result['skill'])))} / {result['scene']}")
         print(f"  method: {result['method_status']} - {result['method_detail']}")
         print(f"  service: {result['service_status']} - {result['service_detail']}")
         if result["message_anchors"]:
@@ -274,8 +274,17 @@ def print_text(results: list[dict[str, object]]) -> None:
 
 def discover_sub_skills() -> list[Path]:
     skill_root = Path(__file__).resolve().parent.parent
+    module_refs = sorted((skill_root / "references" / "modules").glob("*.md"))
+    if module_refs:
+        return module_refs
     paths = sorted(skill_root.glob("xh-log-lookup-*/SKILL.md"))
     return paths
+
+
+def display_module_name(skill_path: Path) -> str:
+    if skill_path.parent.name == "modules" and skill_path.suffix == ".md":
+        return skill_path.stem
+    return skill_path.parent.name
 
 
 def warn_reason(result: dict[str, object]) -> str:
@@ -291,7 +300,7 @@ def warn_reason(result: dict[str, object]) -> str:
 
 
 def print_summary(results: list[dict[str, object]]) -> None:
-    col_mod = max(len(Path(str(r["skill"])).parent.name) for r in results)
+    col_mod = max(len(display_module_name(Path(str(r["skill"])))) for r in results)
     col_mod = max(col_mod, 4)
     col_scene = max(len(str(r["scene"])) for r in results)
     col_scene = max(col_scene, 4)
@@ -307,7 +316,7 @@ def print_summary(results: list[dict[str, object]]) -> None:
     warn_count = 0
     for r in results:
         status = overall_status(r)
-        mod_name = Path(str(r["skill"])).parent.name
+        mod_name = display_module_name(Path(str(r["skill"])))
         valid = "Y" if status != "WARN" else "N"
         line = f"{mod_name:<{col_mod}}  {str(r['scene']):<{col_scene}}  {valid}"
         if valid == "N":
@@ -340,7 +349,7 @@ def main() -> int:
     if args.all:
         skill_paths = discover_sub_skills()
         if not skill_paths:
-            print("未发现任何 xh-log-lookup-*/SKILL.md 子模块")
+            print("未发现任何 references/modules/*.md 业务模块")
             return 1
     else:
         skill_paths = [Path(s) for s in args.skill]

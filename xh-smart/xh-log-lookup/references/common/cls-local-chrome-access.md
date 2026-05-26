@@ -2,7 +2,7 @@
 
 ## 何时读取
 
-当 Hermes 内置浏览器登录态不可用、页面操作失败、需要脚本自动加载更多/批量全文提取，或需要手写 AppleScript 诊断 CLS 页面时读取。常规查询优先使用 Hermes 内置浏览器直接打开 CLS URL。
+当 WorkBuddy 内置浏览器登录态不可用、页面操作失败、需要脚本自动加载更多/批量全文提取，或需要手写 AppleScript 诊断 CLS 页面时读取。常规查询优先使用 WorkBuddy 内置浏览器直接打开 CLS URL。
 
 ## 目录
 
@@ -16,7 +16,7 @@
 
 ## 场景
 
-- Hermes 内置浏览器登录态不可用或页面操作失败
+- WorkBuddy 内置浏览器登录态不可用或页面操作失败
 - 查询含中文（queryBase64 不支持中文）
 - 需要脚本自动加载更多、批量全文提取或本地 DOM 诊断
 
@@ -173,7 +173,7 @@ osascript /tmp/script.applescript
 调查结束（飞书卡片发送成功后），关闭 CLS 窗口避免累积：
 
 ```bash
-python3 /Users/user/.hermes/skills/xh-smart/xh-log-lookup/tools/cls_query.py --close
+python3 ${WORKBUDDY_SKILL_DIR}/scripts/cls_query.py --close
 ```
 
 ## 备用方案：直接 URL 查询（纯 ASCII）

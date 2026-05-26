@@ -4,7 +4,7 @@
 
 ## 原则
 
-优先用 Hermes 内置浏览器在 CLS 直达 URL 页面提取全文、点击"加载更多"并校验完整性。本文件中的 osascript 示例仅适用于本地 Chrome 备用路径；使用这些示例时必须使用已记录的 `CLS_WINDOW_ID`，不要操作用户当前的前台窗口。
+优先用 WorkBuddy 内置浏览器在 CLS 直达 URL 页面提取全文、点击"加载更多"并校验完整性。本文件中的 osascript 示例仅适用于本地 Chrome 备用路径；使用这些示例时必须使用已记录的 `CLS_WINDOW_ID`，不要操作用户当前的前台窗口。
 
 ## ⚠️ 致命坑：innerText 前缀 ≠ 数据存在性
 

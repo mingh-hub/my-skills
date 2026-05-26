@@ -2,7 +2,7 @@
 
 ## 何时读取
 
-当放款/提前结清相关查询需要专项飞书卡片字段、按钮 URL 或错误分类时读取。通用卡片规则仍以 `../../references/feishu-card-template.md` 为准。
+当放款/提前结清相关查询需要专项飞书卡片字段、按钮 URL 或错误分类时读取。通用卡片规则仍以 `../../references/common/feishu-card-template.md` 为准。
 
 ## 目录
 
@@ -91,7 +91,7 @@ thor-app-gateway (env)
 ## `send_feishu_card.py` 调用示例
 
 ```bash
-python3 /Users/user/.hermes/skills/xh-smart/xh-log-lookup/tools/send_feishu_card.py \
+python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py \
   --title "🔴 提前结清失败 · 05-19 14:06:33~14:06:36" \
   --color yellow \
   --cls-url "https://datasight-1300455117.internal.clsconsole.tencent-cloud.com/cls/search?region=ap-beijing&topic_id=1f92a7ca-cf46-4f4f-92dd-72c5df5910dc&time=now-1d,now&queryBase64=$(python3 -c \"import base64; print(base64.b64encode(b'traceId:\\\"d3acd9c5b5207e00\\\"').decode())\")" \

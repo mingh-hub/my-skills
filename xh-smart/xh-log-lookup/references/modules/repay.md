@@ -1,14 +1,3 @@
----
-name: xh-log-lookup-repay
-description: 还款模块日志查询规则，覆盖客户主动还款、账务批扣、聚合支付、API 还款、回调通知订单、结清确认和还款拦截排查。用于按 contractNo、orderId、traceId 排查还款链路、失败原因、成功时间线和结果通知。
-version: 1.2.0
-author: xh-smart
-platforms: [macos]
-metadata:
-  hermes:
-    tags: [repay, payment, logs, xhqb]
----
-
 # 还款日志查询
 
 ## 关联项目
@@ -125,6 +114,6 @@ order 侧入口：
 
 ## References
 
-- `references/new-customer-early-repay-intercept.md`
-- `references/settled-period-tracing.md`
-- `references/repay-calc-logic.md`
+- `references/modules/repay/new-customer-early-repay-intercept.md`
+- `references/modules/repay/settled-period-tracing.md`
+- `references/modules/repay/repay-calc-logic.md`

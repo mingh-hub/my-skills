@@ -126,9 +126,11 @@ def build_rich_elements(text):
 
 
 def load_env():
-    env_path = os.path.expanduser("~/.hermes/.env")
-    if os.path.exists(env_path):
-        with open(env_path) as f:
+    for env_path in ("~/Desktop/feishu/.env", "~/.workbuddy/.env", "~/.hermes/.env"):
+        resolved = os.path.expanduser(env_path)
+        if not os.path.exists(resolved):
+            continue
+        with open(resolved) as f:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith("#") and "=" in line:
