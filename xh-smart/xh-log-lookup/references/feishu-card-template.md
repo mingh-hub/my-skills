@@ -81,6 +81,26 @@ ERROR/查询失败 > WARN/失败/无结果 > SUCCESS
 
 ## 5. 卡片结构
 
+### Native table 中渲染 Markdown
+
+`tools/send_feishu_card.py` 使用飞书 native `table` 渲染表格。表格单元格需要渲染 Markdown（例如 `**加粗**`、链接、行内代码）时，列定义必须包含 `data_type: "markdown"`；纯文本时间如 `13:00:08` 在 markdown 列中仍会正常显示。
+
+```json
+{
+  "tag": "table",
+  "columns": [
+    {"name": "col_0", "display_name": "时间", "data_type": "markdown"},
+    {"name": "col_1", "display_name": "结论", "data_type": "markdown"}
+  ],
+  "rows": [
+    {
+      "col_0": "13:00:08",
+      "col_1": "**通联支付验证失败** · [查看 CLS](https://datasight-xxx/cls/search)"
+    }
+  ]
+}
+```
+
 ```json
 {
   "config": {"wide_screen_mode": true},
