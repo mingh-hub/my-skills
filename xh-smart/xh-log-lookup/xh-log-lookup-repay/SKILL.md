@@ -59,6 +59,26 @@ metadata:
 | 还款成功通知 | `com.xhqb.order.batch.service.apiConsumer.ApiRepayNoticeConsumer#handleMessage` | `ApiRepayNoticeConsumer推进来的消息ID` / `[账务扣款]接受到账务扣款成功信息` | `serviceName:"order-batch" AND message:"ApiRepayNoticeConsumer推进来的消息ID"` | 这是成功结果进入订单系统的强信号 |
 | 还款失败通知 | `com.xhqb.order.batch.service.ZtxAccountDeductFailConsumer#handleMessage` | `ZtxAccountDeductFailConsumer推进来的消息ID` / `[还款失败]处理信息请求为` | `serviceName:"order-batch" AND message:"ZtxAccountDeductFailConsumer推进来的消息ID"` | 这是失败结果进入订单系统的强信号 |
 
+### 通知到 order 的桥接查询
+
+账务成功/失败通知日志可能没有 `traceId`。此时不要硬追 traceId，使用账务扣款流水号 `deductId` 从 `order-batch` 通知桥接到 `order` 侧处理日志。
+
+1. 先用合同号查 `order-batch` 成功/失败通知，找到该笔 MQ/request 全文。
+2. 从通知全文提取扣款流水：
+   - 成功通知：从 `ApiRepayNoticeConsumer` MQ/request 中取 `deductId`
+   - 失败通知：优先从 `ZtxAccountDeductFailConsumer` MQ 中取 `orderNo`；代码会将它设置为 `HandleRepaySituationReq.deductId`
+   - 字段不确定时，在通知全文中同时找 `deductId` / `orderNo` / `applyNo` / `contractNo`
+3. 用扣款流水查 `order` 侧入口日志：
+
+```text
+serviceName:"order" AND message:"[还款记录]处理账务还款通知q请求" AND message:"{deductId}"
+```
+
+order 侧入口：
+`com.xhqb.order.biz.service.impl.repayRecord.RepayRecordServiceImp#handleRepaySituation`
+
+注意：日志锚点中的 `q请求` 是线上真实日志文本，查询时保留原样。
+
 ## 结清确认
 
 ### 确认顺序
