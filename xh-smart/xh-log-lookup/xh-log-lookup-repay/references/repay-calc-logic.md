@@ -64,7 +64,7 @@ if (overdueAmount.compareTo(BigDecimal.ZERO) > 0) {
 
 ## 生命周期状态流转
 
-```
+```text
 NORMAL(正常) → OVERDUE(逾期) → OVERDUE(持续逾期，增长逾期费)
 CURRENT(当期) → REPAYED(已还)
 ```

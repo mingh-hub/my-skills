@@ -91,10 +91,14 @@ def parse_markdown_tables(text):
 
 
 def build_table_element(columns, rows):
-    """Build V2 native table element. 
+    """Build V2 native table element.
     Column headers use display_name; internal keys are col_0, col_1, etc.
+    Markdown data_type keeps inline formatting available inside cells.
     """
-    col_defs = [{"name": f"col_{i}", "display_name": h} for i, h in enumerate(columns)]
+    col_defs = [
+        {"name": f"col_{i}", "display_name": h, "data_type": "markdown"}
+        for i, h in enumerate(columns)
+    ]
     row_datas = []
     for row in rows:
         entry = {}

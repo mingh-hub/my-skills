@@ -11,7 +11,7 @@
 
 ## 何时读取
 
-当需要手工构造或排查 `tools/send_feishu_card.py` 发送的卡片内容时读取。常规查询优先使用 `xh-log-lookup/SKILL.md` 中的简短命令和 `cls_query.py` 输出的 `cls_url` / `expanded_url`。
+当需要手工构造或排查 `tools/send_feishu_card.py` 发送的卡片内容时读取。常规查询优先使用 `xh-log-lookup/SKILL.md` 的 Hermes 内置浏览器路径；需要卡片按钮 URL 时，可用 `cls_query.py` 默认 URL-only 输出的 `cls_url` / `expanded_url`。
 
 主流程见 `../SKILL.md`。所有日志查询结果必须输出飞书卡片；不可用时使用 Markdown 链接降级。
 
@@ -80,6 +80,26 @@ ERROR/查询失败 > WARN/失败/无结果 > SUCCESS
 > 如果结果来自采样或 count 提取失败，必须在卡片中说明“采样”或“总数未成功提取”。
 
 ## 5. 卡片结构
+
+### Native table 中渲染 Markdown
+
+`tools/send_feishu_card.py` 使用飞书 native `table` 渲染表格。表格单元格需要渲染 Markdown（例如 `**加粗**`、链接、行内代码）时，列定义必须包含 `data_type: "markdown"`；纯文本时间如 `13:00:08` 在 markdown 列中仍会正常显示。
+
+```json
+{
+  "tag": "table",
+  "columns": [
+    {"name": "col_0", "display_name": "时间", "data_type": "markdown"},
+    {"name": "col_1", "display_name": "结论", "data_type": "markdown"}
+  ],
+  "rows": [
+    {
+      "col_0": "13:00:08",
+      "col_1": "**通联支付验证失败** · [查看 CLS](https://datasight-xxx/cls/search)"
+    }
+  ]
+}
+```
 
 ```json
 {
@@ -188,7 +208,7 @@ https://datasight-1300455117.internal.clsconsole.tencent-cloud.com/cls/search?re
 正确做法：
 
 - 按钮 URL 的 `queryBase64` 使用 ASCII 查询，例如 `serviceName:"order" AND message:"{标识符}"`
-- 真实中文条件不要进入 `queryBase64`；优先从 `cls_query.py` 提取的全文里二次过滤
+- 真实中文条件不要进入 `queryBase64`；优先从 Hermes 页面全文或本地 Chrome 备用路径提取的全文里二次过滤
 - 详细规则见 `chinese-queryBase64-experiments.md` 和 `cls-react-contenteditable-injection.md`
 
 ## 7. 降级 Markdown

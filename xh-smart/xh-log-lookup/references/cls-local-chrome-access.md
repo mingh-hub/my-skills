@@ -1,8 +1,8 @@
-# CLS 本地 Chrome 访问方法
+# 备用：CLS 本地 Chrome 访问方法
 
 ## 何时读取
 
-当 `tools/cls_query.py` 不足以说明本地 Chrome 专用窗口细节，或需要手写 AppleScript 诊断 CLS 页面时读取。常规查询优先使用 `tools/cls_query.py`。
+当 Hermes 内置浏览器登录态不可用、页面操作失败、需要脚本自动加载更多/批量全文提取，或需要手写 AppleScript 诊断 CLS 页面时读取。常规查询优先使用 Hermes 内置浏览器直接打开 CLS URL。
 
 ## 目录
 
@@ -12,13 +12,13 @@
 - 常见问题
 - 备用 URL 构造
 
-当 Hermes 浏览器的 CLS iframe 因跨域限制无法操作时，通过 AppleScript 控制用户本地 Chrome 直接访问 CLS。
+备用路径通过 AppleScript 控制用户本地 Chrome 直接访问 CLS URL。不要通过 Argus iframe 穿透操作 CLS。
 
 ## 场景
 
-- Hermes 浏览器 CLS iframe 无法触发搜索（React 组件响应问题）
+- Hermes 内置浏览器登录态不可用或页面操作失败
 - 查询含中文（queryBase64 不支持中文）
-- 需要全页面 DOM 访问（ifreme 跨域不允许 JS）
+- 需要脚本自动加载更多、批量全文提取或本地 DOM 诊断
 
 ## 前提
 
@@ -178,7 +178,7 @@ python3 /Users/user/.hermes/skills/xh-smart/xh-log-lookup/tools/cls_query.py --c
 
 ## 备用方案：直接 URL 查询（纯 ASCII）
 
-当本地 Chrome 也不可用时，构造直接 URL：
+当只需要给浏览器打开链接或生成卡片按钮时，构造直接 URL：
 
 ```python
 import base64, urllib.parse

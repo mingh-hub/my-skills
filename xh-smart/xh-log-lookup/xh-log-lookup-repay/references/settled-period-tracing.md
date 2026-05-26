@@ -15,7 +15,8 @@
 ## 合同状态字段速查
 
 - `contractNoState` — 只在特定日志类（DroolsService、CheckShowChangeCardEventListener）中有，不是所有日志都有
-- `orderStatus` — 判据：REPAYED/SETTLED/EARLY_REPAYED = 已结清，REPAYING/OVERDUE = 未结清
+- `orderStatus` — 判据：`settledOrderStatus()` = `REPAYED/SETTLED/REFUNDSETTLED` 为已结清；`repayIngStatus()` = `REPAYING/EARLYREPAYING/OVERDUE` 为还款中/未结清；`EARLYREPAYING` 是提前结清处理中；`getFinalStatus()` 只是流程终态集合，不等于已结清
+- `orderStatus` 放款相关：`loanIngStatus()` = `INIT/INITLOAN/ON_ROUTE/HOLD_ON/RISK_CONFIRM/PRESIGN/PRELOAN` 为放款中；`isLoanSuccess()` = `EARLYREPAYING/OVERDUE/REPAYED/LOAN_SUCESS_PRE_WP/REPAYING` 视为放款成功；`isLoanFail()` = `FAIL/SINGFAIL/LOAN_REFUSE/CANCEL/VERIFCANCEL` 视为放款失败；`getLoaningOrderStatus()` = 放款中 + `REPAYING/EARLYREPAYING/OVERDUE`
 - `accountStatus` — ACTIVE = 活跃，CLAIMS_Z/CLAIMS_L = 已理赔
 - `最近结清期数` — 日切任务给出最新已结清的期次号
 
@@ -26,7 +27,8 @@
 **步骤**：
 
 1. 宽搜 contractNo：
-   ```
+
+   ```text
    message:"CK202604090001010"
    ```
 
@@ -36,7 +38,8 @@
    → orderId = 20260402003723692743
 
 4. 搜 orderId 精细定位：
-   ```
+
+   ```text
    serviceName:"order" AND message:"20260402003723692743"
    ```
 
@@ -50,7 +53,8 @@
    - **12:40:29** — `查询微信订阅结果`（微信支付回调，已延迟）
 
 6. 查调用链确认来源：
-   ```
+
+   ```text
    SR [172.18.2.202:42286] [ArbitrarilyRepayService.sendRepay]
    → appChannel=APPWECHAT 从 h5-loan 的 /repay/sendRepay 发起
    ```

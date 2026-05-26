@@ -1,7 +1,7 @@
 ---
 name: xh-log-lookup-repay
-description: 还款模块日志查询规则 — 还款/代扣/聚合支付/好友代付的入口覆盖、查询模板和失败模式
-version: 1.1.0
+description: 还款模块日志查询规则，覆盖客户主动还款、账务批扣、聚合支付、API 还款、回调通知订单、结清确认和还款拦截排查。用于按 contractNo、orderId、traceId 排查还款链路、失败原因、成功时间线和结果通知。
+version: 1.2.0
 author: xh-smart
 platforms: [macos]
 metadata:
@@ -9,227 +9,122 @@ metadata:
     tags: [repay, payment, logs, xhqb]
 ---
 
-# 还款日志查询 — 业务规则
+# 还款日志查询
 
-## 涉及项目
+## 关联项目
 
-**后端**: order (RepayOrderServiceImpl, ArbitrarilyRepayServiceImpl, AggregateRepayServiceImpl), account
+- 后端：`order`
+- 自营前端入口：调用 `H5LoanProject` 的 HTTP 服务
+- API 渠道入口：调用 `order` 的 Dubbo 服务
 
-**前端/API 层**: H5LoanProject (`RepayController.java` — 还款查询/还款发起入口。拦截逻辑、弹窗消息很多在这里，不在 order 服务日志里)
+## 查询主键
 
-**排查陷阱**: 用户反馈的还款页面提示信息（拦截弹窗、不能还款原因）可能来自 H5LoanProject 的 `RepayController.queryRepayOrderInfo()`，不是 order 服务的返回。查不到 order 日志不代表没有拦截——先搜 H5LoanProject 源码确认消息来源。
+| 输入 | 默认优先级 | 说明 |
+|------|------------|------|
+| `orderId` | 客户主动还款优先 | 适合追单笔还款发起、聚合支付和回调链路 |
+| `contractNo` | 账务批扣/结果通知优先 | 适合结清确认、通知订单、日切确认 |
+| `traceId` | 最高优先级直搜 | 直接 `traceId:"{value}"`，不拼 `serviceName` |
 
-## 核心流程链路追踪模版
+## 总体规则
 
-> Phase A 查询统一前缀: `serviceName:"order" AND ...`（还款逻辑也在 order 服务中）
+- 还款分两条主线：客户主动还款、账务批扣。
+- 客户主动还款再分自营和 API 渠道。
+- 账务只要有结果，就会通知订单系统；没有看到订单通知日志时，不要直接下最终成功/失败结论。
+- 还款请求时间不等于实际结清时间。
+- `traceId` 按原值查询，支持 16 位或 32 位 hex。
 
-| 场景 | 方法入口 | 日志锚点/关键词 | 推荐查询 | 关键指标 | 说明 |
-|------|----------|----------------|----------|----------|------|
-| 还款请求 | `com.xhqb.order.biz.service.impl.ArbitrarilyRepayServiceImpl#sendRepay` | `还款请求`、`支付金额` | `serviceName:"order" AND message:"还款请求" AND message:"orderId:{value}"` | | 借助 orderId 或 contractNo 值搜确认完整链路 |
-| 还款状态同步 | `com.xhqb.order.biz.service.impl.RepayOrderServiceImpl#syncRepaySingleOrder` | `同步单个订单还款状态` | `serviceName:"order" AND message:"同步单个订单还款状态" AND message:"订单{orderId}"` | | 自动代扣/回调状态同步入口 |
-| 合同还款状态 | `com.xhqb.order.biz.service.impl.RepayOrderServiceImpl#syncRepaySingleOrder` | `合同`、`订单状态`、`账户状态` | `serviceName:"order" AND message:"合同{contractNo}"` | | message 中的 contractNo placeholder 不参与锚点校验 |
-| 还款试算 | `com.xhqb.order.biz.service.impl.RepayOrderServiceImpl#computeEarlyRepay` | `[还款试算]` | `serviceName:"order" AND message:"[还款试算]" AND message:"{contractNo}"` | | 正常/提前结清试算可能落在不同私有方法 |
-| 任性还款（即期/提前结清） | `com.xhqb.order.biz.service.impl.ArbitrarilyRepayServiceImpl#sendRepay` | `还款请求,保存还款流水` | `serviceName:"order" AND message:"还款请求,保存还款流水" AND message:"{contractNo}"` | | 只能证明请求入库，不能证明结清成功 |
-| 聚合支付 | `com.xhqb.order.biz.service.impl.AggregateRepayServiceImpl#aggregateRapaySend` | `[聚合支付]`、`还款请求` | `serviceName:"order" AND message:"[聚合支付]" AND message:"orderId:{value}"` | | 0 命中时退回 orderId/contractNo 值搜 |
-| 聚合支付检查 | `com.xhqb.order.biz.service.impl.AggregateRepayServiceImpl#aggregateRepayCheck` | `[聚合支付类型]查询` | `serviceName:"order" AND message:"[聚合支付类型]查询" AND message:"orderId:{value}"` | | 模板若不匹配，以当前代码锚点为准 |
-| 好友代付 | `com.xhqb.order.biz.service.impl.AggregateRepayServiceImpl#friendRepayInit` | `[好友代付]` | `serviceName:"order" AND message:"[好友代付]" AND message:"{orderId}"` | | 方法名如变更，先搜 `[好友代付]` 锚点 |
-| API代扣 | `com.xhqb.order.biz.service.impl.ArbitrarilyRepayServiceImpl#sendRepay` | `orderId=[{}]是API渠道` | `serviceName:"order" AND message:"orderId=[{value}]"` | | 固定片段为 `orderId=[` 和 `是API渠道` |
-| 查询异常 | `com.xhqb.order.biz.service.impl.ArbitrarilyRepayServiceImpl#queryRepayOrderInfo` | `[查询订单信息以及还款金额]` | `serviceName:"order" AND message:"[查询订单信息以及还款金额]" AND message:"cid:{cid}"` | | cid 查不到时改用 orderId/contractNo |
-| 返现券 | `com.xhqb.order.biz.service.impl.ArbitrarilyRepayServiceImpl#queryRepayOrderInfo` | `[返现券]计算返现券请求` | `serviceName:"order" AND message:"[返现券]" AND message:"orderId:{value}"` | | 还款页面返现券计算入口 |
-| 订单已出账（某期已到还款日） | `com.xhqb.order.biz.service.impl.ArbitrarilyRepayServiceImpl#queryRepayOrderInfo` | `订单id`、`期已出账` | `serviceName:"order" AND message:"{orderId}" AND message:"期已出账"` | | 只表示该期到还款日，不等于结清 |
+## 客户主动还款
 
-## 用户输入 → 首次查询策略
+### 自营客户
 
-| 用户提供 | 推荐首查语句 | 说明 |
-|---------|-------------|------|
-| orderId | serviceName:"order" AND message:"还款请求" AND message:"orderId:{value}" | |
-| contractNo | serviceName:"order" AND message:"合同{value}" | 还款模块最常用的标识符 |
-| cid | serviceName:"order" AND message:"[查询订单信息以及还款金额]" AND message:"cid:{value}" | |
-| traceId/线程号 | traceId:"{value}" | 直接全链路，**不加 serviceName** |
+| 场景 | 方法入口 | 日志锚点 | 推荐查询 |
+|------|----------|----------|----------|
+| 还款前可还时间校验 | `com.xhqb.h5loan.biz.service.controller.RepayController#checkRepayAvailableTime` | `校验是否可还款` | `serviceName:"h5-loan" AND message:"校验是否可还款"` |
+| 列表入口还款 | `com.xhqb.h5loan.biz.service.controller.RepayController#sendRepay` | `[还款请求]客户cid` / `还款请求,request` | `serviceName:"h5-loan" AND message:"还款请求"` |
+| 客户聚合支付入口（新） | `com.xhqb.h5loan.biz.service.controller.AggregateRepayController#aggrAutoSendRepay` | `aggrAutoSendRepay` / `[聚合支付]发起支付result` | `serviceName:"h5-loan" AND message:"aggrAutoSendRepay" AND message:"{contractNo}"` |
+| 客户聚合支付（老）/一键还款 | `com.xhqb.h5loan.biz.service.controller.AggregateRepayController#aggregateRepaySendNew` | `aggregateRepaySendNew` / `[聚合支付]客户发起还款` | `serviceName:"h5-loan" AND message:"aggregateRepaySend" AND message:"{orderId}"` |
 
-## 日志中标识符的出现形式
+### API 客户
 
-- **orderId**: `orderId:{xxx}` / 在 repayRecord.toString() 中
-- **contractNo**: `合同{xxx}` / `contractNo:{xxx}` / `合同号:{xxx}`（还款模块最常见的标识符）
-- **cid**: `cid:{xxx}` / `userId:{xxx}`
+| 场景 | 方法入口 | 日志锚点 | 推荐查询 |
+|------|----------|----------|----------|
+| 还款试算 | `com.xhqb.order.common.service.api.RepayService#trial` | `trial` / 试算日志 | 先查 `traceId`，没有则按 `orderId` 宽搜 |
+| API 还款试算 | `com.xhqb.order.common.service.RepayOrderService#apiRepaymentRequest` | `[还款请求]还款请求为` | `serviceName:"order" AND message:"[还款请求]还款请求为" AND message:"{orderId}"` |
+| API 发起还款 | `com.xhqb.order.common.service.ApiRepayService#sendRepay` | `com.xhqb.order.common.service.ApiRepayService.sendRepay` / `还款请求` | `serviceName:"order" AND message:"com.xhqb.order.common.service.ApiRepayService.sendRepay" AND message:"{orderId}"` |
 
-> contractNo 是还款场景中最常用的标识符，优先使用。
+## 账务批扣与结果通知
 
-## ⚠️ 关键区分：还款请求时间 ≠ 实际结清成功时间
+| 场景 | 方法入口 | 日志锚点 | 推荐查询 | 结论意义 |
+|------|----------|----------|----------|----------|
+| 还款成功通知 | `com.xhqb.order.batch.service.apiConsumer.ApiRepayNoticeConsumer#handleMessage` | `ApiRepayNoticeConsumer推进来的消息ID` / `[账务扣款]接受到账务扣款成功信息` | `serviceName:"order-batch" AND message:"ApiRepayNoticeConsumer推进来的消息ID"` | 这是成功结果进入订单系统的强信号 |
+| 还款失败通知 | `com.xhqb.order.batch.service.ZtxAccountDeductFailConsumer#handleMessage` | `ZtxAccountDeductFailConsumer推进来的消息ID` / `[还款失败]处理信息请求为` | `serviceName:"order-batch" AND message:"ZtxAccountDeductFailConsumer推进来的消息ID"` | 这是失败结果进入订单系统的强信号 |
 
-**这是一个容易犯错但非常重要的区分。** 用户问"某期什么时候结清"时，要的是**扣款实际成功的时间**，不是客户发起还款请求的时间。发起还款可能失败，不能以请求时间为准。
+### 通知到 order 的桥接查询
 
-### 哪条日志才是"实际结清成功"的确认信号？
+账务成功/失败通知日志可能没有 `traceId`。此时不要硬追 traceId，使用账务扣款流水号 `deductId` 从 `order-batch` 通知桥接到 `order` 侧处理日志。
 
-| 日志 | 类 | 可作确认信号？ |
-|------|----|:---:|
-| `还款请求,保存还款流水` | ArbitrarilyRepayServiceImpl | ❌ 仅表示请求被收到 |
-| `订单id:{orderId}的N期已出账` | ArbitrarilyRepayServiceImpl | ❌ 该期到还款日 |
-| `[聚合支付类型]查询` | AggregateRepayServiceImpl | ❌ 支付检查通过 |
-| `查询微信订阅结果` | ArbitrarilyRepayServiceImpl | ⚠️ 中间态 |
-| **`{orderId}的还款成功，恢复额度:{amount}`** | **RepayOrderServiceImpl** | **✅ 确凿** |
-| `[返现券]还款成功处理请求 (stageNbr=N)` | CashBackEventListen | ✅ 佐证 |
-| `REPAYMENT_SUCCESS` (SQS推送微信模板) | JmsQService | ✅ 佐证 |
-| `最近结清期数: N` (日切) | account-swift-app-job | ✅ 但延迟至凌晨 |
-| `syncType:DEDUCT_NOTIVE` | JmsQService | ⚠️ 不一定等于成功 |
-
-### 判断原则
-
-> **⛔ 不要用「还款请求」时间当结清时间。** 请求可能失败、超时、被回调拒绝。
-> **✅ 结清确认的唯一铁证**：`RepayOrderServiceImpl` 打印的 `{orderId}的还款成功，恢复额度:{amount}`。看到这条日志才是系统确认扣款成功的时刻。
-
-如果只有请求日志没有"还款成功"日志，说明请求还在处理中、支付未确认、或已失败。需要进一步查 `DEDUCT_NOTIVE` 回调和 `pay-app-bill` 对账状态。
-
-## 已结清期次查询（"第一期什么时候结清"类问题）
-
-当用户问某合同的某期次是否已结清/何时结清时，分三步查：
-
-### Phase A：确认已结清期次 — 查 account-swift-app-job 日切日志
-
-```
-message:"{contractNo}" AND message:"最近结清期数"
-```
-
-这个关键词出现在 account-swift-app-job 服务的日切（daily cutover）任务中。示例输出：
-
-```
-账户: CK202604090001010, 最近结清期数: 1, 剩余未还本金: 4339.6
-```
-
-**含义**：系统确认最近一次结清的是第 N 期。剩余未还本金是下一期的本金。
-
-> 日切任务每天跑一次（凌晨），所以日志中的「最近结清期数」反映的是截至日切点的状态。
-
-### Phase B：搜 orderId 追溯完整还款时间线
-
-通过 orderId（可从 Phase A 的结果中提取）反向查找整个还款流程：
-
-```
-serviceName:"order" AND message:"{orderId}"
-```
-
-关键日志序列（从请求到成功，按时间排序）：
-
-| 时间点 | 日志 | 含义 |
-|--------|------|------|
-| T+0s | `订单id:{orderId}的N期已出账` (ArbitrarilyRepayServiceImpl) | 该期已到还款日，账已出 |
-| T+1s | `还款请求,还款记录` (ArbitrarilyRepayServiceImpl) | 收到还款请求 |
-| T+2s | `还款请求,保存还款流水` (ArbitrarilyRepayServiceImpl) | 还款流水入库 |
-| T+3s | `[聚合支付类型]查询 repayStageDetail=N` (AggregateRepayServiceImpl) | 聚合支付检查通过 |
-| T+1~3s | `查询订单信息以及还款金额,获取提前还款金额` (ArbitrarilyRepayServiceImpl) | 计算待还金额 |
-| **T+3~4s** | **`{orderId}的还款成功，恢复额度:{amount}`** (**RepayOrderServiceImpl**) | **✅ 实际结清成功** |
-| T+3~4s | `[返现券]还款成功处理请求 stageNbr=N` (CashBackEventListen) | 返现事件确认 |
-| T+3~4s | `REPAYMENT_SUCCESS` 模板消息推送 (JmsQService) | 微信还款成功通知 |
-| T+1h~next day | `syncType:DEDUCT_NOTIVE` (JmsQService MQ) | 同步扣款状态（可能延迟） |
-
-> 从实际案例来看，请求到成功仅需 **3~4 秒**。微信订阅支付回调（DEDUCT_NOTIVE）可能延迟 1 小时以上，但那不是结清的时间点。
-
-### Phase C：确认发起系统 — 查调用链
-
-找到 `ArbitrarilyRepayService.sendRepay` 的 SR（Service Request）调用记录：
-
-```
-SR [callerIP:port] [com.xhqb.order.common.service.ArbitrarilyRepayService.sendRepay]
-```
-
-调用链：
-
-```
-APP客户端（APPWECHAT/微信小程序/Android/iOS/H5）
-  → h5-loan 服务 RepayController.sendRepay()  [POST /repay/sendRepay]
-    → order 服务 ArbitrarilyRepayService.sendRepay()  [Dubbo RPC]
-```
-
-**代码入口**：h5-loan 项目的 `RepayController.java`（`@RequestMapping(value = "/sendRepay")`），会设置 `appChannel`（如 APPWECHAT）、`repayType`（PERIOD_REPAY/EARLY_REPAY）等参数。
-
-**如何判断用户主动 vs 系统代扣**：
-- `ArbitrarilyRepayServiceImpl` = 用户主动任性还款
-- `RepayOrderServiceImpl.syncRepaySingleOrder` = 自动代扣/扣款回调
-
-### 完整还款链路（从请求到扣款完成）
-
-```
-APP客户端（微信APP/小程序等）
-  → h5-loan.RepayController.sendRepay()      [POST /repay/sendRepay]
-    → order.ArbitrarilyRepayServiceImpl       [Dubbo: 任性还款请求]
-      → order.AggregateRepayServiceImpl       [聚合支付类型检查]
-        → 微信订阅支付/银行卡代扣              [支付通道]
-          → 易宝(yeepay)等网关                [实际扣款]
-            → ✅ 扣款成功 → 恢复额度
-            → JmsQService MQ发送 DEDUCT_NOTIVE [异步回调]
-              → account-swift-app-job 日切     [更新最近结清期数]
-              → pay-app-bill 对账              [对账记录]
-```
-
-### 示例：查询合同第一期结清时间
+1. 先用合同号查 `order-batch` 成功/失败通知，找到该笔 MQ/request 全文。
+2. 从通知全文提取扣款流水：
+   - 成功通知：从 `ApiRepayNoticeConsumer` MQ/request 中取 `deductId`
+   - 失败通知：优先从 `ZtxAccountDeductFailConsumer` MQ 中取 `orderNo`；代码会将它设置为 `HandleRepaySituationReq.deductId`
+   - 字段不确定时，在通知全文中同时找 `deductId` / `orderNo` / `applyNo` / `contractNo`
+3. 用扣款流水查 `order` 侧入口日志：
 
 ```text
-Step 1: 宽搜 contractNo
-   message:"CK202604090001010"
-   → 找到 orderId（如 20260402003723692743）
-   → 找到 account-swift-app-job 日切确认「最近结清期数: 1」
-
-Step 2: 搜 orderId 精细定位
-   serviceName:"order" AND message:"20260402003723692743"
-   → 找到关键日志行：
-     11:16:10.084 — 还款请求（ArbitrarilyRepayServiceImpl）
-     11:16:13.935 — ✅ 还款成功，恢复额度:360.4（RepayOrderServiceImpl）← 真正结清时间
-
-Step 3: 确认结论
-   实际结清时间 = 2026-05-17 11:16:13.935（而非请求时间 11:16:10）
-   来源系统 = h5-loan.POST /repay/sendRepay → order.ArbitrarilyRepayServiceImpl（任性还款）
-   渠道 = APPWECHAT（微信APP）
+serviceName:"order" AND message:"[还款记录]处理账务还款通知q请求" AND message:"{deductId}"
 ```
 
-## 失败模式
+order 侧入口：
+`com.xhqb.order.biz.service.impl.repayRecord.RepayRecordServiceImp#handleRepaySituation`
 
-| 现象 | 诊断 |
+注意：日志锚点中的 `q请求` 是线上真实日志文本，查询时保留原样。
+
+## 结清确认
+
+### 确认顺序
+
+1. 先查发起日志，确认是客户主动还款还是账务批扣。
+2. 再查回调/通知日志，确认订单系统是否已收到结果。
+3. 最后查结清确认信号，不要把请求时间当成功时间。
+
+### 强结论信号
+
+| 信号 | 含义 |
 |------|------|
-| 支付金额 ≠ 还款金额 - 溢缴金额 - 优惠券金额 | 金额计算异常 |
-| "sendRepay并发请求" | 并发还款冲突 |
-| "订单{x}合同{x}不存在" | 数据不一致 |
-| "已结清" | 重复还款 |
-| level:"ERROR" + "[查询订单信息以及还款金额]" | 查询异常，看堆栈 |
-| [聚合支付]发起还款后无后续日志 | 下游支付通道超时或无回调 |
-| **"提前结清于资金到账N天后可发起，如需帮助请联系在线客服"** | **新客提前结清拦截弹窗（新客提还拦截）**。H5LoanProject RepayController 的 `needWeakenSettle()` 判定，不在 order 日志中。含义：该合同是新客/特定资方，放款至今未满 N 天（配置项 `weaken.settle.rule` 中的 `oldPopWindowDays`/`newPopWindowDays`），被主动拦截了提前结清入口，**不是异常，是业务规则**。也会伴随 `setPopWindow(true)`。 |
-| 页面显示"不能还款原因"但无 ERROR 日志 | 原因通常设置于 `QueryRepayOrderResult.canotRepayReason`，由后端还款校验链（`RepaymentAbility.timeLimit`/`dateLimit`/`accountingLimit`）返回。逐层检查：时间限制 → 日期限制 → 账务校验。`OrdinaryRepaymentLimit` 和 `ImperfectRepaymentLimit` 是主要实现类。 |
+| `"{orderId}的还款成功，恢复额度:{amount}"` | 实际结清成功 |
+| `ApiRepayNoticeConsumer推进来的消息ID` | 账务成功结果进入订单系统 |
+| `ZtxAccountDeductFailConsumer推进来的消息ID` | 账务失败结果进入订单系统 |
+| `最近结清期数: N` | 日切确认已结清期次 |
 
-## 关联服务
+## 查询拦截排查
 
-order, account（合约/账务）, **H5LoanProject**（还款查询 API 入口）
+当用户反馈“不能还款”或“提前结清于资金到账N天后可发起”时，优先看 H5 层拦截，不要直接只查 `order`。
 
-## ⚠️ 还款查询拦截排查指南
+| 提示 | 位置 | 说明 |
+|------|------|------|
+| `提前结清于资金到账N天后可发起` | `H5LoanProject.RepayController#queryRepayOrderInfo` / `needWeakenSettle` | 新客/资方规则拦截 |
+| `系统维护中，请在[...]后还款` | `order` 侧时间限制 | 黑暗期拦截 |
+| `当前不支持提前还款` | `order` 侧日期限制 | 提前还款日期限制 |
+| 账务校验拦截 | `order` 调账务服务校验 | 拦截结果由 `order` 调用账务侧服务后返回，账务服务不属于订单组内服务 |
 
-当用户反馈"查询还款信息时提示XX不能还款"时，**不要直接去 order 日志找原因**。还款页面的拦截按以下链路排查：
+## 推荐首查
 
-### 排查链路
+| 用户提供 | 推荐首查语句 |
+|---------|-------------|
+| `orderId` | `serviceName:"order" AND message:"还款请求" AND message:"{orderId}"` |
+| `contractNo` | `serviceName:"order" AND message:"{contractNo}"` |
+| `traceId` | `traceId:"{value}"` |
 
-```
-用户页面
-  → H5LoanProject RepayController.queryRepayOrderInfo()    [访问 queryRepayOrderInfo 源码]
-    → order.ArbitrarilyRepayServiceImpl.queryRepayOrderInfo() [order RPC]
-      → RepaymentAbility.timeLimit()                         [时间限制: 黑暗期/特殊时间]
-      → RepaymentAbility.dateLimit()                         [日期限制: earlyStagesRepayDays]
-      → RepaymentAbility.accountingLimit()/accountLimit()    [账务校验: checkRepay/checkOrderCanRepay]
-```
+## 常见误区
 
-### 各类拦截消息的代码位置
-
-| 提示消息关键词 | 代码位置 | 含义 |
-|--------------|---------|------|
-| "天后可发起"、"提前结清于资金到账" | H5LoanProject `RepayController.needWeakenSettle()` + `queryRepayOrderInfo()` 第475-477行 | 新客/特定资方提前结清拦截。`popWindowDays` 来自 Apollo 配置 `weaken.settle.rule` |
-| "系统维护中，请在[...]后还款" | order `OrdinaryRepaymentLimit.timeLimit()` 第100行 | 还款黑暗期，支付系统维护 |
-| "当前不支持提前还款" | order `OrdinaryRepaymentLimit.dateLimit()` 第212行 | 提前还款日期限制（`earlyStagesRepayDays` 配置） |
-| 账务校验拦截（无统一消息） | order `ImperfectRepaymentLimit.accountingLimit()` | 由 `advancedRepayService.checkRepay()` 或 `repaySupportService.checkOrderCanRepay()` 返回。结果来自 loki 服务等 |
-
-### 搜索策略
-
-- **消息在源码内**（如"天后可发起"）→ 从映射表`仓库路径`列取各项目路径，`grep -r '关键词' {仓库路径}/ --include='*.java'`。消息可能不在 order 项目，需要在 H5LoanProject/loki 等其他项目搜索。
-- **消息由后端接口返回**（`ResultEnum` 枚举）→ 查 ResultEnum 定义或对应枚举值。
-- **消息由前端写死** → 不在此技能范围，确认后标记为前端静态文案。
+- `还款请求` 只代表发起，不代表结清。
+- `DEDUCT_NOTIVE` 不是结清时间，只是同步消息。
+- `最近结清期数` 是日切结果，不是实时扣款时刻。
+- `traceId` 不要只按 16 位理解，原样查询。
+- `BATCH_DUE`代表账务批扣通知
 
 ## References
 
-- `references/new-customer-early-repay-intercept.md`：新客提前结清拦截（新客提还拦截弹窗规则、`needWeakenSettle()` 代码位置）
-- `references/repay-calc-logic.md`：还款订单列表和逾期金额计算逻辑（`queryRepayOrderList` 入口）
-- `references/settled-period-tracing.md`：已结清期次追踪实战参考（account-swift-app-job 日切信号、出账确认）
+- `references/new-customer-early-repay-intercept.md`
+- `references/settled-period-tracing.md`
+- `references/repay-calc-logic.md`

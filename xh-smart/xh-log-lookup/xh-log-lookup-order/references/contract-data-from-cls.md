@@ -83,7 +83,7 @@ serviceName:"order" AND message:"同步单个订单还款状态,查询中腾信�
 ```text
 Step 1: 判断查询意图 → 存量状态查询（非流程追踪）
 Step 2: 选择查询模板（按 contractNo / 按 cid / 按账务同步）
-Step 3: 构造 CLS 查询 → 用本地 Chrome（AppleScript）+ 生产 topic
+Step 3: 构造 CLS 查询 → 优先用 Hermes 内置浏览器打开生产 topic 的完整 CLS URL；必要时切换到本地 Chrome（AppleScript）备用路径
 Step 4: 提取页面文本结果
 Step 5: 去重汇总 → 统计 unique contractNo、orderStatus、剩余本金等
 Step 6: 说明限制 — 仅30天有活动的合同

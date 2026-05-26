@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """CLS query helper for xh-log-lookup.
 
-Builds CLS URLs, optionally opens them in a dedicated local Chrome window, loads
-all visible result pages, extracts document.body.innerText, and prints JSON.
+Builds CLS URLs by default. It only opens the user's local Chrome when
+--use-local-chrome is explicitly provided.
 """
 
 import argparse
@@ -221,7 +221,7 @@ def write_text(path: str, text: str) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Build and optionally execute a CLS query.")
+    parser = argparse.ArgumentParser(description="Build CLS URLs; optionally execute via local Chrome.")
     parser.add_argument("--query", help="ASCII CLS query used for execution.")
     parser.add_argument("--close", action="store_true", help="Close CLS/Argus windows and exit.")
     parser.add_argument("--url-query", help="ASCII query used in jump URLs; defaults to --query.")
@@ -232,7 +232,16 @@ def main() -> int:
     parser.add_argument("--max-load-more", type=int, default=15)
     parser.add_argument("--delay", type=float, default=1.0)
     parser.add_argument("--wait", type=float, default=8.0)
-    parser.add_argument("--no-browser", action="store_true", help="Only build URLs; do not use Chrome.")
+    parser.add_argument(
+        "--use-local-chrome",
+        action="store_true",
+        help="Open and operate a dedicated local Chrome window. Backup path only.",
+    )
+    parser.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="Only build URLs; retained for compatibility and now the default.",
+    )
     parser.add_argument(
         "--require-complete",
         action="store_true",
@@ -257,6 +266,20 @@ def main() -> int:
     cls_url = build_url(url_query, args.env, time_range)
     expanded_url = build_url(url_query, args.env, expanded_time)
 
+    if args.require_complete and not args.use_local_chrome and not args.input_text:
+        result = {
+            "error": "LOCAL_CHROME_OPT_IN_REQUIRED",
+            "message": (
+                "--require-complete needs extracted CLS text. Use Hermes browser "
+                "for the default path, or add --use-local-chrome only after "
+                "explicitly switching to the local Chrome backup path."
+            ),
+            "cls_url": cls_url,
+            "expanded_url": expanded_url,
+        }
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 2
+
     text = ""
     window_id = None
     load_more_clicks = 0
@@ -265,7 +288,7 @@ def main() -> int:
 
     if args.input_text:
         text = Path(args.input_text).read_text(encoding="utf-8", errors="replace")
-    elif not args.no_browser:
+    elif args.use_local_chrome and not args.no_browser:
         ensure_ascii(run_query, "--query")
         window_id = ensure_window(build_url(run_query, args.env, time_range))
         time.sleep(args.wait)
@@ -329,6 +352,7 @@ def main() -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 1
 
+    has_text = bool(text)
     result = {
         "env": args.env,
         "topic_id": TOPICS[args.env]["topic_id"],
@@ -339,16 +363,18 @@ def main() -> int:
         "expanded_time": expanded_time,
         "cls_url": cls_url,
         "expanded_url": expanded_url,
-        "output_path": output_path,
+        "output_path": output_path if has_text else None,
         "window_id": window_id,
         "load_more_clicks": load_more_clicks,
-        "log_count": log_count,
-        "loaded_count": loaded_count,
-        "has_more": has_more,
-        "is_complete": not has_more,
-        "completeness_ratio": round(loaded_count / max(log_count, 1), 3) if log_count > 0 else 1.0,
-        "services": parse_services(text) if text else [],
-        "contracts": parse_contracts(text) if text else [],
+        "log_count": log_count if has_text else None,
+        "loaded_count": loaded_count if has_text else None,
+        "has_more": has_more if has_text else None,
+        "is_complete": (not has_more) if has_text else None,
+        "completeness_ratio": (
+            round(loaded_count / max(log_count, 1), 3) if has_text and log_count > 0 else None
+        ),
+        "services": parse_services(text) if has_text else [],
+        "contracts": parse_contracts(text) if has_text else [],
     }
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0

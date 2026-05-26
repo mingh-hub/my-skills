@@ -62,7 +62,7 @@ CLS 页面默认只渲染部分结果。traceId 跨服务链路可能有数百�
 
 正确做法：
 
-- 用 `tools/cls_query.py` 的 `--max-load-more` 让工具自动点击“加载更多”。
+- Hermes 页面操作失败或需要批量自动提取时，切换到本地 Chrome 备用路径，用 `tools/cls_query.py --use-local-chrome --max-load-more` 自动点击“加载更多”。
 - 提取全文后检查 `services` 覆盖。
 - 如果页面仍有“加载更多”且服务数过少，说明结果仍不完整。
 
@@ -76,9 +76,9 @@ CLS 页面默认只渲染部分结果。traceId 跨服务链路可能有数百�
 
 处理：
 
-1. 重新用 `cls_query.py` 打开完整 URL。
+1. 重新打开完整 CLS URL，优先使用 Hermes 内置浏览器。
 2. 确认 URL 同时包含 `topic_id`、`time`、`queryBase64`。
-3. 避免复用被手工点乱的页面；必要时新开本地 Chrome 专用窗口。
+3. 避免复用被手工点乱的页面；必要时切换到本地 Chrome 备用窗口。
 4. 不要直接重启或杀 Chrome，除非用户明确允许。
 
 ## 7. level 字段统一加引号
