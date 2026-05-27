@@ -47,7 +47,7 @@ disable: false
 
 #### 统计模式完整性铁律
 
-1. **完整性优先，WorkBuddy 优先**：统计模式下必须拿到完整数据后才能做数值结论。优先用 WorkBuddy 内置浏览器打开完整 CLS URL、加载全部结果并校验完整性；不要为了使用 `--require-complete` 直接运行会打开本地 Chrome 的 `cls_query.py`。
+1. **完整性优先，API 优先**：统计模式下必须拿到完整数据后才能做数值结论。先用 `scripts/cls_query.py --method auto` 走 CLS HTTP API；API 明确完整时可直接统计。API 返回 `is_complete=false`、`error=INCOMPLETE_DATA` 或 `source=api_failed` 时，降级到 WorkBuddy 内置浏览器打开完整 CLS URL、加载全部结果并校验完整性。
 
 2. **本地 Chrome 备用路径才用 `--require-complete`**：只有明确切换到本地 Chrome 备用路径并调用 `cls_query.py` 执行/提取时，才必须加 `--require-complete`。无此标志的 `cls_query.py` 执行结果禁止用于任何数值统计。
 
@@ -61,10 +61,11 @@ disable: false
 #### 统计模式工作流
 
 ```
-用户请求 → 识别统计关键词 → 构造完整 CLS URL（可用 cls_query.py --no-browser）
-  → WorkBuddy 内置浏览器打开 URL → 加载更多直到完整 → 输出精确统计
+用户请求 → 识别统计关键词 → cls_query.py --method auto --require-complete
+  → source=api 且 is_complete=true → 输出精确统计
+  → API 不完整/失败 → WorkBuddy 内置浏览器打开 cls_url → 加载更多直到完整
   → WorkBuddy 不可用/页面操作失败/需要批量自动提取
-    → 切换本地 Chrome 备用路径：cls_query.py --require-complete
+    → 切换本地 Chrome 备用路径：cls_query.py --method local-chrome --require-complete
       → is_complete=true → 正常分析，输出精确统计
       → error=INCOMPLETE_DATA → 按 suggested_actions 拆分
         → 每段都 --require-complete → 合并完整段数据 → 输出统计
@@ -89,7 +90,7 @@ disable: false
 - 分析要查的数据是否在子模块的流程追踪入口，是的话可以通过日志锚点查询，不是的话分析本地项目路径，确认查询`sql`,服务名参考上面`日志服务名和项目名映射关系表`；子模块入口表格里的推荐查询只是通过代码锚点校验后的首查模板，不是唯一真相。
 - 执行入口表格推荐查询前，先校验 `方法入口`、`serviceName` 和固定 `message` 片段是否仍能和当前代码匹配；可用 `scripts/validate_query_anchors.py` 辅助检查。
 - 标识符值优先直接放入 `message:\"{value}\"`，禁止加 `cid:`、`orderId:`、`contractNo:`
-- 日志查询sql中如果包含中文, 查询不要直接放入 `queryBase64`。使用注入方案：先用 ASCII queryBase64 URL 加载页面，再通过 contenteditable + `execCommand('insertText')` + `String.fromCharCode()` 注入中文查询（详见 `references/common/cls-react-contenteditable-injection.md`）
+- 日志查询 SQL 中如果包含中文，优先走 `scripts/cls_query.py --method api/auto`，API 路径直接传原始查询语句，不受 `queryBase64` 限制。只有浏览器 fallback URL 需要 ASCII `url_query`；必要时再读取 `references/common/cls-react-contenteditable-injection.md` 做页面注入。
 - **分页未加载完** — CLS 每页只显示 20 条，`load_more_clicks` 是否足够？检查 `log_count` 字段
 - 日志平台查询常用 key 见下文"查询语法与字段"段。
 
@@ -111,10 +112,11 @@ disable: false
 3. **`=` 等号查询退化** — 如果查询含 `message:\"字段=值\"` 且 `log_count` 显示为 topic 总量（数百万级），说明 CLS 退化为全量返回。加 `AND level:\"WARN\"/\"INFO\"` 等额外约束可恢复精确过滤。此时应以实际加载出的日志内容为准
 4. **最后才怀疑语法** — 大部分**语法问题**是时间窗口或分页导致的，此时需要将查询`sql`本地项目做关联，确认日志是否过期，若日志过期提醒用户更新
 
-### 浏览器和 CLS
+### API、内置浏览器和本地浏览器优先级
 
-- 优先用 WorkBuddy 内置浏览器直接打开 CLS URL。URL 必须包含 `topic_id`、`time`、`queryBase64`，避免依赖页面默认状态。
-- 本地 Chrome + AppleScript 是备用路径：当 WorkBuddy 登录态不可用、页面操作失败、需要脚本自动加载更多或批量全文提取时，使用 `scripts/cls_query.py`。
+- 优先用 `scripts/cls_query.py --method auto`。默认先请求 CLS 内部 HTTP API，不需要浏览器、不需要 `secret_id/secret_key`，查询中可直接包含中文。
+- API 返回 `source=api_failed` 或 `is_complete=false` 时，使用输出中的 `cls_url` 交给 WorkBuddy 内置浏览器打开。URL 必须包含 `topic_id`、`time`、`queryBase64`，避免依赖页面默认状态。
+- 本地 Chrome + AppleScript 是最后备用路径：当 WorkBuddy 登录态不可用、页面操作失败、需要脚本自动加载更多或批量全文提取时，显式使用 `scripts/cls_query.py --method local-chrome --use-local-chrome`。
 - 使用本地 Chrome 备用路径时，禁止默认操作 `active tab of front window`。首次查询创建新的 Chrome window，后续查询复用该窗口，通过 window id 定向操作；调查结束后调用 `scripts/cls_query.py --close` 关闭窗口。
 - 不要用 `document.body.innerText.substring(0,N)` 判断结果；CLS 日志数据在页面文本后部。
 - `traceId` 查询也可能超过 20 条；必须加载全部数据进行解析
@@ -130,10 +132,10 @@ disable: false
 
 | 意图 | 识别特征 | 查询策略 |
 |------|---------|---------|
-| 数据统计 | 统计、汇总、占比、成功率、总数、计数、健康检查、有多少、多少笔 | WorkBuddy 优先并强制完整性；本地 Chrome 备用路径才用 `--require-complete` |
+| 数据统计 | 统计、汇总、占比、成功率、总数、计数、健康检查、有多少、多少笔 | API 优先并强制完整性；API 不完整则 WorkBuddy；本地 Chrome 备用路径才用 `--require-complete` |
 | 流程追踪 | 借款、下单、放款、还款、权益、签约、绑卡、指定 `traceId`/`orderId`/`contractNo` | 路由到业务模块 reference，按入口日志定位 `traceId`，再查全链路 |
 | 健康检查 | 最近有没有异常、无具体标识符 | 使用业务模块 reference 的总览式查询步骤 |
-| SSO/登录 | Argus/CLS 要登录、JANUS/PMP 会话失效 | 使用 `xh-sso-access` |
+| SSO/登录 | 浏览器 fallback 跳转 Argus/JANUS/PMP 登录 | 使用 `xh-sso-access` |
 
 ## 业务路由
 
@@ -151,21 +153,40 @@ disable: false
 
 1. 提取环境、时间范围、标识符 → 分类意图 → 路由到业务模块 reference。
 2. 代码锚点校验（规则见上文"推荐查询锚点校验"），组装 CLS 查询。
-3. **判断是否为统计模式（见"数据统计强制约束"）。是 → WorkBuddy 优先加载完整结果；仅本地 Chrome 备用路径加 `--require-complete`。**
-4. 构造 CLS URL 后优先用 WorkBuddy 内置浏览器查询；必要时用 `scripts/cls_query.py` 执行/提取全文，校验完整性。统计模式下 `error=INCOMPLETE_DATA` 时按建议拆分重试。
+3. **判断是否为统计模式（见"数据统计强制约束"）。是 → `cls_query.py --method auto --require-complete`；API 完整才可统计。**
+4. 非统计模式默认 `cls_query.py --method auto`。API 不可用或结果不完整时，用返回的 `cls_url` 交给 WorkBuddy 内置浏览器；必要时再显式切换本地 Chrome 备用路径。
 5. 0 命中时按"无结果排查清单"回退。
 6. 分析日志 → `scripts/send_feishu_card.py` 发卡片。仅使用本地 Chrome 备用窗口时，最后调用 `cls_query.py --close` 关窗口。
 
 ## CLS 工具
 
-### 构造 URL，不打开浏览器
+### 默认：API 优先查询
 
-WorkBuddy 优先路径下，ASCII 查询（包括健康检查 Step 0 / 统计查询）先生成 CLS URL，再用 WorkBuddy 内置浏览器打开。`cls_query.py` 默认只构造 URL；只有显式加 `--use-local-chrome` 才会打开本地 Chrome。
+`cls_query.py` 默认使用 `--method auto`：先走 CLS HTTP API；API 失败或无法确认完整时，返回 `fallback_method: "workbuddy"` 和完整 `cls_url`。只有显式 `--method local-chrome` 或 `--use-local-chrome` 才会打开本地 Chrome。
 
 ```bash
 python3 ${WORKBUDDY_SKILL_DIR}/scripts/cls_query.py \
   --env prod \
-  --query 'serviceName:"order" AND message:"20161002000002677537"' \
+  --query 'serviceName:"order" AND message:"20161002000002677537"'
+```
+
+API 成功时输出 JSON 包含：
+
+- `source: "api"`：来自 HTTP API
+- `logs`：结构化日志数组
+- `output_path`：同步写出的文本文件路径
+- `loaded_count/log_count/is_complete`：完整性状态
+- `fallback_method: "workbuddy"`：API 不完整时的下一步
+
+### WorkBuddy URL fallback，不打开浏览器
+
+旧的纯 URL 构造方式保留为 `--method workbuddy`，`--no-browser` 也会兼容转入该模式。
+
+```bash
+python3 ${WORKBUDDY_SKILL_DIR}/scripts/cls_query.py \
+  --method workbuddy \
+  --env prod \
+  --query 'serviceName:"order" AND level:"ERROR"' \
   --no-browser
 ```
 
@@ -173,6 +194,7 @@ python3 ${WORKBUDDY_SKILL_DIR}/scripts/cls_query.py \
 
 ```bash
 python3 ${WORKBUDDY_SKILL_DIR}/scripts/cls_query.py \
+  --method local-chrome \
   --env prod \
   --time 'now-7d,now' \
   --query 'traceId:"37426d42fdc699d1"' \
@@ -195,9 +217,10 @@ python3 ${WORKBUDDY_SKILL_DIR}/scripts/cls_query.py \
 
 ```bash
 python3 ${WORKBUDDY_SKILL_DIR}/scripts/cls_query.py \
+  --method local-chrome \
   --env prod \
   --time 'now-1d,now' \
-  --query 'serviceName:"order" AND message:"[借款下单]下单请求结果为"' \
+  --query 'serviceName:"order" AND level:"ERROR"' \
   --output /tmp/cls_output.txt \
   --require-complete \
   --use-local-chrome
@@ -205,9 +228,9 @@ python3 ${WORKBUDDY_SKILL_DIR}/scripts/cls_query.py \
 
 仅在 WorkBuddy 不可用、页面操作失败或需要批量自动提取时使用此备用路径。统计模式下调用 `cls_query.py` 执行/提取必须使用 `--require-complete`；工具自动加载更多数据（最多 200 次）。仍不完整时返回 `error: INCOMPLETE_DATA` 和拆分建议，此时禁止分析已有数据。
 
-### 中文查询注入
+### 中文查询
 
-queryBase64 不支持非 ASCII。中文查询需先用 ASCII URL 加载页面，再通过页面查询框注入或从提取全文中二次过滤；本地 Chrome 备用路径可使用 AppleScript + `String.fromCharCode()` + `execCommand('insertText')` 注入。详见 `references/common/cls-react-contenteditable-injection.md`。
+API 路径直接支持中文查询，例如 `serviceName:"order" AND message:"签约"`。浏览器 URL fallback 仍受 `queryBase64` 限制：工具会自动生成 ASCII-safe `url_query`，必要时再通过页面查询框注入中文或从提取全文中二次过滤。详见 `references/common/cls-react-contenteditable-injection.md`。
 
 ### 校验入口表锚点
 
@@ -266,6 +289,7 @@ python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py \
 - `references/common/cls-local-chrome-access.md`：备用：本地 Chrome 专用窗口访问 CLS
 - `references/common/cls-dom-extraction.md`：全文提取、加载更多、CK/CS 合同号解析
 - `references/common/cls-query-pitfalls.md`：CLS 高频坑和恢复方式
+- `references/common/cls-api-query.md`：CLS HTTP API 直查 payload、返回结构和 fallback 规则
 - `references/common/chinese-queryBase64-experiments.md`：中文 queryBase64 限制
 - `references/common/cls-react-contenteditable-injection.md`：React contenteditable 中文注入方案（String.fromCharCode + execCommand）
 - `references/common/feishu-card-template.md`：飞书卡片结构和按钮 URL 规则

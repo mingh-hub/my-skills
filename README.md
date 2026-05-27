@@ -10,7 +10,7 @@ my-skills/
     xh-log-lookup/              # 日志查询主控
       SKILL.md
       agents/openai.yaml
-      tools/                    # Python CLI 工具
+      scripts/                  # Python CLI 工具
         cls_query.py
         send_feishu_card.py
         validate_query_anchors.py
@@ -46,17 +46,17 @@ my-skills/
 
 | 工具 | 路径 | 说明 |
 | ---- | ---- | ---- |
-| cls_query.py | `xh-smart/xh-log-lookup/tools/` | 构造 CLS 查询 URL，通过 Chrome AppleScript 打开专用窗口、加载分页、提取页面文本，支持 `--no-browser` 纯 URL 模式 |
-| send_feishu_card.py | `xh-smart/xh-log-lookup/tools/` | 发送飞书交互式卡片（诊断结论、调用链、健康检查），支持 red/yellow/green/blue 四色 |
-| validate_query_anchors.py | `xh-smart/xh-log-lookup/tools/` | 校验 SKILL.md 中推荐查询的代码锚点是否与源码匹配 |
+| cls_query.py | `xh-smart/xh-log-lookup/scripts/` | 优先通过 CLS HTTP API 查询日志；API 不可用或结果不完整时输出 WorkBuddy fallback URL，显式选择时才用本地 Chrome/AppleScript |
+| send_feishu_card.py | `xh-smart/xh-log-lookup/scripts/` | 发送飞书交互式卡片（诊断结论、调用链、健康检查），支持 red/yellow/green/blue 四色 |
+| validate_query_anchors.py | `xh-smart/xh-log-lookup/scripts/` | 校验 SKILL.md 中推荐查询的代码锚点是否与源码匹配 |
 | argus_session.py | `xh-smart/xh-sso-access/tools/` | 管理本地 Chrome Argus 会话窗口（创建/复用/校验 cookie/提取 cookie） |
 | test_encrypt.py | `xh-smart/xh-sso-access/tools/` | PMP SSO RSA 加密实验脚本（需要 `cryptography` 包） |
 
 ## 环境要求
 
-- **macOS** — 所有浏览器自动化通过 AppleScript 驱动 Google Chrome
-- **Python 3.10+** — 主要工具仅依赖标准库，无需 pip install
-- **Google Chrome** — CLS/Argus 页面访问和日志提取
+- **macOS** — 仅本地浏览器兜底路径需要 AppleScript 驱动 Google Chrome
+- **Python 3.9+** — 主要工具仅依赖标准库，无需 pip install
+- **Google Chrome** — 仅 WorkBuddy 不可用、需要本地 Chrome 兜底访问和日志提取时需要
 - 可选：`~/.hermes/.env` 中配置 `FEISHU_APP_ID`、`FEISHU_APP_SECRET`、`FEISHU_HOME_CHANNEL`（飞书卡片发送）
 - 可选：`cryptography` Python 包（仅 `test_encrypt.py` 需要）
 
@@ -69,7 +69,7 @@ bash .claude/skills/run-my-skills/smoke.sh
 自动发现并验证所有 Python 工具和 agent 定义文件：
 
 - 对每个 `*/tools/*.py` 执行 `--help` 检查（缺依赖标记 SKIP）
-- 对 `cls_query.py` 执行 `--no-browser` URL 构建验证
+- 对 `cls_query.py` 执行 `--method workbuddy --no-browser` URL 构建验证
 - 对含锚点表的 `SKILL.md` 执行 `validate_query_anchors.py` 校验
 - 对每个 `*/agents/*.yaml` 执行格式校验
 
