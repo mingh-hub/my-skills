@@ -6,15 +6,15 @@
 
 - 不再通过 Argus iframe 穿透操作 CLS。
 - 不再把本地 cookie 注入云端浏览器。
-- 应直接打开 CLS URL；优先使用 Hermes 内置浏览器，本地 Chrome + AppleScript 作为备用路径。
+- 应直接打开 CLS URL；优先使用 WorkBuddy 内置浏览器，本地 Chrome + AppleScript 作为备用路径。
 
 ## 当前入口
 
 使用主流程：
 
 1. 组装 CLS URL，包含 `topic_id`、`time`、`queryBase64`。
-2. 优先用 Hermes 内置浏览器直接打开该 URL。
-3. Hermes 登录态不可用、页面操作失败或需要脚本自动提取时，改用本地 Chrome 备用窗口。
+2. 优先用 WorkBuddy 内置浏览器直接打开该 URL。
+3. WorkBuddy 登录态不可用、页面操作失败或需要脚本自动提取时，改用本地 Chrome 备用窗口。
 4. 使用本地 Chrome 备用窗口时，后续导航、`document.body.innerText` 提取、加载更多点击都按 window id 定向执行。
 
 具体模板见：

@@ -1,14 +1,3 @@
----
-name: xh-log-lookup-loan
-description: 放款模块日志查询规则 — 资金路由/放款推送/解H的入口覆盖和查询模板
-version: 1.0.0
-author: xh-smart
-platforms: [macos]
-metadata:
-  hermes:
-    tags: [loan, fund-route, disbursement, logs, xhqb]
----
-
 # 放款日志查询 — 业务规则
 
 ## 涉及项目
@@ -47,7 +36,7 @@ order (OrderRouteService, LoanOrderServiceImpl, ReleaseHoldOrderServiceImpl), lo
 | `反欺诈通过` 后无放款日志 | 路由环节卡住或 loki 服务异常 |
 | `反欺诈不通过` | 风控拒绝 |
 | `借款复核拒绝` | 复核环节被拒 |
-| `[提前结清]...有效账户不存在` | 合同在资金方侧无有效账户记录（数据问题/销户），见 `references/early-settle-card-template.md` |
+| `[提前结清]...有效账户不存在` | 合同在资金方侧无有效账户记录（数据问题/销户），见 `references/modules/loan/early-settle-card-template.md` |
 | `[提前结清]调用{资方}提前结清金额明细查询结果,result:{"status":"FAIL"...` | 资方提前结清查询返回失败，需查看具体 errMsg |
 | `[提前结清]...system error/http error` | 调用资方接口网络异常或超时 |
 
@@ -64,4 +53,4 @@ order, loki, underwriter, frontendcenter, account-gateway
 
 ## 提前结清飞书卡片模板
 
-提前结清失败的标准化飞书卡片模板见：`references/early-settle-card-template.md`。包含调用链展示、资方错误、诊断结论和按钮配置。
+提前结清失败的标准化飞书卡片模板见：`references/modules/loan/early-settle-card-template.md`。包含调用链展示、资方错误、诊断结论和按钮配置。

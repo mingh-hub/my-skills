@@ -1,14 +1,3 @@
----
-name: xh-log-lookup-benefit
-description: 权益模块日志查询规则 — 权益/会员/优惠券/乐活卡的入口覆盖和查询模板
-version: 1.1.0
-author: xh-smart
-platforms: [macos]
-metadata:
-  hermes:
-    tags: [benefit, coupon, member, logs, xhqb]
----
-
 # 权益日志查询 — 业务规则
 
 ## 涉及项目

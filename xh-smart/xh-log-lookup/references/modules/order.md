@@ -1,17 +1,6 @@
----
-name: xh-log-lookup-order
-description: 订单模块日志查询规则。Use when investigating order/loan 下单, 续签, 借款能力预检, T4 提现门槛, 反欺诈, 资金路由, orderId/cid/contractNo, 存量未结清合同, or order health checks.
-metadata:
-  hermes:
-    version: 2.1.0
-    author: xh-smart
-    platforms: [macos]
-    tags: [order, loan, logs, cid, orderId, contractNo]
----
-
 # 订单日志查询
 
-订单模块子 Skill 只提供`首查策略`、`核心流程追踪入口`、`关键失败场景`、`健康检查`。CLS 执行、加载更多、飞书卡片输出统一交给 `xh-log-lookup` 主控工具。
+订单模块 reference 只提供`首查策略`、`核心流程追踪入口`、`关键失败场景`、`健康检查`。CLS 执行、加载更多、飞书卡片输出统一交给 `xh-log-lookup` 主控工具。
 
 ## 涉及服务
 
@@ -63,7 +52,7 @@ metadata:
 
 ## 健康检查
 
-无具体标识符时，按 `Step 0→1→2→3→4`。**Step 0 是"异常告警"查询的必做步骤**，常规健康检查也建议先执行 Step 0 排除非 [借款下单] 类异常。**健康检查属于统计模式，所有 Step 必须按主控 `xh-log-lookup` 的统计完整性规则执行：Hermes 优先加载完整结果；仅切换到本地 Chrome 备用路径时才使用 `cls_query.py --require-complete --use-local-chrome`。**
+无具体标识符时，按 `Step 0→1→2→3→4`。**Step 0 是"异常告警"查询的必做步骤**，常规健康检查也建议先执行 Step 0 排除非 [借款下单] 类异常。**健康检查属于统计模式，所有 Step 必须按主控 `xh-log-lookup` 的统计完整性规则执行：WorkBuddy 优先加载完整结果；仅切换到本地 Chrome 备用路径时才使用 `cls_query.py --require-complete --use-local-chrome`。**
 
 Step 0 使用 `level:"ERROR"` 通用查询，不依赖代码锚点，可直接执行。Step 1-3 的中文日志前缀（`[借款下单]下单请求为` 等）依赖代码，首次使用前必须用 `validate_query_anchors.py` 或 grep 本地代码确认锚点仍存在。
 
@@ -79,13 +68,13 @@ Step 0 使用 `level:"ERROR"` 通用查询，不依赖代码锚点，可直接�
 
 ## References
 
-- `references/precheck-passed-but-cant-borrow.md`：预检全部通过但客户仍无法借款的排查指南（含guideCheckAbility vs queryOverdueMark差异、还款计划级别逾期盲区）
-- `../xh-log-lookup-sign/SKILL.md`：签约、重签约、协议状态专项排查
-- `references/re-sign-troubleshooting-20260519.md`：重签约问题排查记录
-- `references/t4-withdrawal-threshold.md`：T4 提现门槛规则说明
-- `references/antifraud-retry-mechanism.md`：反欺诈重试机制完整说明（代码、日志锚点、CLS 查询、排查路径）
-- `references/order-health-check-examples-20260517.md`：健康检查样例
-- `references/order-database-access.md`：测试库 SQL 和状态定义
-- `references/contract-data-from-cls.md`：CLS 合同数据提取
-- `references/order-status-glossary.md`：订单状态字典
-- `references/data-inquiry-fund-decision-tracing.md`：datainquiry 资金决策链路
+- `references/modules/order/precheck-passed-but-cant-borrow.md`：预检全部通过但客户仍无法借款的排查指南（含guideCheckAbility vs queryOverdueMark差异、还款计划级别逾期盲区）
+- `references/modules/sign.md`：签约、重签约、协议状态专项排查
+- `references/modules/order/re-sign-troubleshooting-20260519.md`：重签约问题排查记录
+- `references/modules/order/t4-withdrawal-threshold.md`：T4 提现门槛规则说明
+- `references/modules/order/antifraud-retry-mechanism.md`：反欺诈重试机制完整说明（代码、日志锚点、CLS 查询、排查路径）
+- `references/modules/order/order-health-check-examples-20260517.md`：健康检查样例
+- `references/modules/order/order-database-access.md`：测试库 SQL 和状态定义
+- `references/modules/order/contract-data-from-cls.md`：CLS 合同数据提取
+- `references/modules/order/order-status-glossary.md`：订单状态字典
+- `references/modules/order/data-inquiry-fund-decision-tracing.md`：datainquiry 资金决策链路

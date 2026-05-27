@@ -1,14 +1,3 @@
----
-name: xh-log-lookup-sign
-description: 签约模块日志查询规则。用于排查借款签约、还款签约、重新签约/重签、银行卡签约、支付协议/代扣协议、RESIGN、SIGNING_ISSUE、签约失败、绑卡、手机号、身份证号、idCard、phone、needReSign，以及 APP 反复提示重新签约。
-metadata:
-  hermes:
-    version: 1.0.0
-    author: xh-smart
-    platforms: [macos]
-    tags: [sign, resign, agreement, repayment-sign, loan-sign, logs]
----
-
 # 签约日志查询
 
 专门处理签约相关问题：借款签约、还款签约、重新签约、银行卡/支付协议/代扣协议状态、签约失败和 APP 反复提示重签。CLS 执行、加载更多、飞书卡片输出统一交给 `xh-log-lookup` 主控。
@@ -99,6 +88,6 @@ metadata:
 
 ## References
 
-- `references/re-sign-troubleshooting-20260519.md`：重新签约、全渠道禁闭、RESIGN 缓存实录
-- `../xh-log-lookup-order/references/order-status-glossary.md`：订单签约状态如 `PRESIGN`、`SINGFAIL`
-- `../xh-log-lookup-repay/SKILL.md`：还款成功/失败链路和扣款确认信号
+- `references/modules/sign/re-sign-troubleshooting-20260519.md`：重新签约、全渠道禁闭、RESIGN 缓存实录
+- `references/modules/order/order-status-glossary.md`：订单签约状态如 `PRESIGN`、`SINGFAIL`
+- `references/modules/repay.md`：还款成功/失败链路和扣款确认信号

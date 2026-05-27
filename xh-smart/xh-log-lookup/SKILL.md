@@ -1,21 +1,21 @@
 ---
 name: xh-log-lookup
-description: 当用户需要查询生产或测试环境日志时，启用此技能。此技能为生产和测试环境日志查询流程主控，可以通过：线程号（traceId），订单号（orderId），用户ID（cid，userId，customerId），合同号（contractNo），手机号（mobileNo，mobilePhone），身份证号（idNo，identityNo，certNo）等信息查询借款能力，借款内容（借款试算），签约，下单，权益，放款，还款，债转各业务模块日志，帮助用户快速定位问题根因。
-metadata:
-  hermes:
-    version: 2.0.2
-    author: xh-smart
-    platforms: [macos]
-    tags: [logs, cls, argus, traceId, orderId, cid, contractNo, feishu]
+description: 当用户需要查询生产或测试环境 CLS/Argus 日志、定位借款/下单/签约/权益/放款/还款问题，或需要 traceId/orderId/cid/contractNo/mobile/idNo 排查时使用。
+allowed-tools:
+  - Bash(python3 ${WORKBUDDY_SKILL_DIR}/scripts/cls_query.py *)
+  - Bash(python3 ${WORKBUDDY_SKILL_DIR}/scripts/validate_query_anchors.py *)
+  - Bash(python3 ${WORKBUDDY_SKILL_DIR}/scripts/resolve_workspace.py *)
+  - Bash(python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py *)
+disable: false
 ---
 
 # xh-log-lookup — 日志查询主控
 
-处理生产/测试环境日志查询、业务异常排查、CLS 结果及根因分析和**飞书卡片输出**。主控只负责意图分类、路由、强制约束和工具调用；业务细节在子 Skill 和 references 中。
+处理生产/测试环境日志查询、业务异常排查、CLS 结果及根因分析和**飞书卡片输出**。主控只负责意图分类、路由、强制约束和工具调用；业务细节在 `references/modules/` 和 `references/common/` 中。
 
 ## 日志服务名和项目名映射关系表
 
-`仓库路径`列为空或路径不存在时，执行 `tools/resolve_workspace.py` 自动探测并更新映射表。
+`仓库路径`列为空或路径不存在时，执行 `scripts/resolve_workspace.py` 自动探测并更新映射表。
 | serviceName | 项目名 | 仓库路径 |
 |----|----|----|
 |`order`|`order`|`/Users/hisense/Documents/workspace/order`|
@@ -43,11 +43,11 @@ metadata:
 当用户意图包含以下任一关键词时，自动进入**统计模式**：
 `统计`、`汇总`、`占比`、`成功率`、`总数`、`计数`、`分布`、`趋势`、`健康检查`、`有多少`、`多少笔`、`有几条`、`总共`、`一共`、`百分比`、`比例`、`平均`、`最多`、`最少`
 
-健康检查（见子 Skill 的 Step 0-4）**始终**属于统计模式。
+健康检查（见业务模块 reference 的 Step 0-4）**始终**属于统计模式。
 
 #### 统计模式完整性铁律
 
-1. **完整性优先，Hermes 优先**：统计模式下必须拿到完整数据后才能做数值结论。优先用 Hermes 内置浏览器打开完整 CLS URL、加载全部结果并校验完整性；不要为了使用 `--require-complete` 直接运行会打开本地 Chrome 的 `cls_query.py`。
+1. **完整性优先，WorkBuddy 优先**：统计模式下必须拿到完整数据后才能做数值结论。优先用 WorkBuddy 内置浏览器打开完整 CLS URL、加载全部结果并校验完整性；不要为了使用 `--require-complete` 直接运行会打开本地 Chrome 的 `cls_query.py`。
 
 2. **本地 Chrome 备用路径才用 `--require-complete`**：只有明确切换到本地 Chrome 备用路径并调用 `cls_query.py` 执行/提取时，才必须加 `--require-complete`。无此标志的 `cls_query.py` 执行结果禁止用于任何数值统计。
 
@@ -62,8 +62,8 @@ metadata:
 
 ```
 用户请求 → 识别统计关键词 → 构造完整 CLS URL（可用 cls_query.py --no-browser）
-  → Hermes 内置浏览器打开 URL → 加载更多直到完整 → 输出精确统计
-  → Hermes 不可用/页面操作失败/需要批量自动提取
+  → WorkBuddy 内置浏览器打开 URL → 加载更多直到完整 → 输出精确统计
+  → WorkBuddy 不可用/页面操作失败/需要批量自动提取
     → 切换本地 Chrome 备用路径：cls_query.py --require-complete
       → is_complete=true → 正常分析，输出精确统计
       → error=INCOMPLETE_DATA → 按 suggested_actions 拆分
@@ -85,17 +85,17 @@ metadata:
   - **用户未提供 traceId**：按后续步骤用业务标识符定位日志后，从提取的 innerText 中识别 `traceid` 列值（通常为 16 位或 32 位 hex，如 `110e6550d81fb1bc`、`b4d5cc63c42611adb4d5cc63c42611ad`），再执行 `traceId:"{提取值}"` 做全链路分析；不要自行截断成前 16 位
   - **traceId ≠ TID**：两者是不同的索引字段，不要混淆。以 `traceid` 列为准
   - 日志无法获取明确结果时可结合项目代码
-- 每次会话首次执行**代码锚点**校验前，按 `references/update-master-branch.md` 更新对应服务仓库的 master 分支（路径见映射表`仓库路径`列）
+- 每次会话首次执行**代码锚点**校验前，按 `references/common/update-master-branch.md` 更新对应服务仓库的 master 分支（路径见映射表`仓库路径`列）
 - 分析要查的数据是否在子模块的流程追踪入口，是的话可以通过日志锚点查询，不是的话分析本地项目路径，确认查询`sql`,服务名参考上面`日志服务名和项目名映射关系表`；子模块入口表格里的推荐查询只是通过代码锚点校验后的首查模板，不是唯一真相。
-- 执行入口表格推荐查询前，先校验 `方法入口`、`serviceName` 和固定 `message` 片段是否仍能和当前代码匹配；可用 `tools/validate_query_anchors.py` 辅助检查。
+- 执行入口表格推荐查询前，先校验 `方法入口`、`serviceName` 和固定 `message` 片段是否仍能和当前代码匹配；可用 `scripts/validate_query_anchors.py` 辅助检查。
 - 标识符值优先直接放入 `message:\"{value}\"`，禁止加 `cid:`、`orderId:`、`contractNo:`
-- 日志查询sql中如果包含中文, 查询不要直接放入 `queryBase64`。使用注入方案：先用 ASCII queryBase64 URL 加载页面，再通过 contenteditable + `execCommand('insertText')` + `String.fromCharCode()` 注入中文查询（详见 `references/cls-react-contenteditable-injection.md`）
+- 日志查询sql中如果包含中文, 查询不要直接放入 `queryBase64`。使用注入方案：先用 ASCII queryBase64 URL 加载页面，再通过 contenteditable + `execCommand('insertText')` + `String.fromCharCode()` 注入中文查询（详见 `references/common/cls-react-contenteditable-injection.md`）
 - **分页未加载完** — CLS 每页只显示 20 条，`load_more_clicks` 是否足够？检查 `log_count` 字段
 - 日志平台查询常用 key 见下文"查询语法与字段"段。
 
 ### 推荐查询锚点校验
 
-各子业务模块的`流程追踪入口`：`场景 | 方法入口 | 日志锚点/关键词 | 推荐查询 | 关键指标 | 说明`。
+各业务模块 reference 的`流程追踪入口`：`场景 | 方法入口 | 日志锚点/关键词 | 推荐查询 | 关键指标 | 说明`。
 
 - `方法入口` 存在且 `serviceName` 与源码项目匹配、固定 `message:\"...\"` 片段仍在该入口类/方法附近命中时，才把推荐查询作为 Phase A 主查询。
 - 方法存在但固定 message 不匹配时，不要把旧模板当主路径；改用 `serviceName:\"{服务}\" AND message:\"{标识符}\"`，并 grep 当前代码找新日志前缀。
@@ -113,16 +113,16 @@ metadata:
 
 ### 浏览器和 CLS
 
-- 优先用 Hermes 内置浏览器直接打开 CLS URL。URL 必须包含 `topic_id`、`time`、`queryBase64`，避免依赖页面默认状态。
-- 本地 Chrome + AppleScript 是备用路径：当 Hermes 登录态不可用、页面操作失败、需要脚本自动加载更多或批量全文提取时，使用 `tools/cls_query.py`。
-- 使用本地 Chrome 备用路径时，禁止默认操作 `active tab of front window`。首次查询创建新的 Chrome window，后续查询复用该窗口，通过 window id 定向操作；调查结束后调用 `tools/cls_query.py --close` 关闭窗口。
+- 优先用 WorkBuddy 内置浏览器直接打开 CLS URL。URL 必须包含 `topic_id`、`time`、`queryBase64`，避免依赖页面默认状态。
+- 本地 Chrome + AppleScript 是备用路径：当 WorkBuddy 登录态不可用、页面操作失败、需要脚本自动加载更多或批量全文提取时，使用 `scripts/cls_query.py`。
+- 使用本地 Chrome 备用路径时，禁止默认操作 `active tab of front window`。首次查询创建新的 Chrome window，后续查询复用该窗口，通过 window id 定向操作；调查结束后调用 `scripts/cls_query.py --close` 关闭窗口。
 - 不要用 `document.body.innerText.substring(0,N)` 判断结果；CLS 日志数据在页面文本后部。
 - `traceId` 查询也可能超过 20 条；必须加载全部数据进行解析
 - **分析前必须校验完整性**：统计模式下见上方"⛔ 数据统计强制约束"。非统计模式下：对比 `log_count` 与 `loaded_count`，若 `is_complete` 为 false 或 `loaded_count` 远小于 `log_count`，在飞书卡片中标注"基于 N/M 条采样分析，结论可能不完整"并使用黄色卡片。
 
 ### 飞书输出与结论规则
 
-- 所有诊断结论、分析报告必须通过 `tools/send_feishu_card.py` 发送飞书卡片，禁止直接写进聊天。只有脚本执行失败时才降级为 Markdown。
+- 所有诊断结论、分析报告必须通过 `scripts/send_feishu_card.py` 发送飞书卡片，禁止直接写进聊天。只有脚本执行失败时才降级为 Markdown。
 - 卡片 **URL** 必须包含 `topic_id`、`time`、`queryBase64`；当结果集中在单线程时，URL 只带 `traceId` 即可。
 - 每次结论须包含：查了什么代码/日志前缀、CLS 查询语句/topic/时间范围、命中摘要与未命中证据、完整性状态（`loaded_count` vs `log_count`）、关键节点时间（`timestamp` 格式）、卡片发送状态。
 
@@ -130,40 +130,40 @@ metadata:
 
 | 意图 | 识别特征 | 查询策略 |
 |------|---------|---------|
-| 数据统计 | 统计、汇总、占比、成功率、总数、计数、健康检查、有多少、多少笔 | Hermes 优先并强制完整性；本地 Chrome 备用路径才用 `--require-complete` |
-| 流程追踪 | 借款、下单、放款、还款、权益、签约、绑卡、指定 `traceId`/`orderId`/`contractNo` | 路由到业务子 Skill，按入口日志定位 `traceId`，再查全链路 |
-| 健康检查 | 最近有没有异常、无具体标识符 | 使用业务子 Skill 的总览式查询步骤 |
+| 数据统计 | 统计、汇总、占比、成功率、总数、计数、健康检查、有多少、多少笔 | WorkBuddy 优先并强制完整性；本地 Chrome 备用路径才用 `--require-complete` |
+| 流程追踪 | 借款、下单、放款、还款、权益、签约、绑卡、指定 `traceId`/`orderId`/`contractNo` | 路由到业务模块 reference，按入口日志定位 `traceId`，再查全链路 |
+| 健康检查 | 最近有没有异常、无具体标识符 | 使用业务模块 reference 的总览式查询步骤 |
 | SSO/登录 | Argus/CLS 要登录、JANUS/PMP 会话失效 | 使用 `xh-sso-access` |
 
 ## 业务路由
 
-| 关键词 | 子 Skill | 业务模块 |
+| 关键词 | 业务模块 reference | 业务模块 |
 |--------|---------|--------|
-| 签约、重签、重新签约、RESIGN、SIGNING_ISSUE、协议、绑卡、银行卡签约、代扣协议、支付协议 | `xh-log-lookup-sign` | 签约模块 |
-| 下单、端内（自营）下单、api下单、订单、拦截、反欺诈、借款能力预检、预检、借款试算、试算 | `xh-log-lookup-order` | 下单模块 |
-| 权益、会员、VIP、优惠券、乐活卡、coupon、尊享卡、拒就赔、加速卡、获额卡、返现券 | `xh-log-lookup-benefit` | 权益模块 |
-| 放款、资金路由、route、解H、loki放款、拒就赔、提前结清、特项额度 | `xh-log-lookup-loan` | 放款模块 |
-| 还款、扣款、逾期、代扣、结清、repay、债转、好友代付、聚合支付 | `xh-log-lookup-repay` | 还款模块 |
+| 签约、重签、重新签约、RESIGN、SIGNING_ISSUE、协议、绑卡、银行卡签约、代扣协议、支付协议 | `references/modules/sign.md` | 签约模块 |
+| 下单、端内（自营）下单、api下单、订单、拦截、反欺诈、借款能力预检、预检、借款试算、试算 | `references/modules/order.md` | 下单模块 |
+| 权益、会员、VIP、优惠券、乐活卡、coupon、尊享卡、拒就赔、加速卡、获额卡、返现券 | `references/modules/benefit.md` | 权益模块 |
+| 放款、资金路由、route、解H、loki放款、拒就赔、提前结清、特项额度 | `references/modules/loan.md` | 放款模块 |
+| 还款、扣款、逾期、代扣、结清、repay、债转、好友代付、聚合支付 | `references/modules/repay.md` | 还款模块 |
 
 匹配不到业务模块时，先问用户确认。
 
 ## 标准工作流
 
-1. 提取环境、时间范围、标识符 → 分类意图 → 路由到业务子 Skill。
+1. 提取环境、时间范围、标识符 → 分类意图 → 路由到业务模块 reference。
 2. 代码锚点校验（规则见上文"推荐查询锚点校验"），组装 CLS 查询。
-3. **判断是否为统计模式（见"数据统计强制约束"）。是 → Hermes 优先加载完整结果；仅本地 Chrome 备用路径加 `--require-complete`。**
-4. 构造 CLS URL 后优先用 Hermes 内置浏览器查询；必要时用 `tools/cls_query.py` 执行/提取全文，校验完整性。统计模式下 `error=INCOMPLETE_DATA` 时按建议拆分重试。
+3. **判断是否为统计模式（见"数据统计强制约束"）。是 → WorkBuddy 优先加载完整结果；仅本地 Chrome 备用路径加 `--require-complete`。**
+4. 构造 CLS URL 后优先用 WorkBuddy 内置浏览器查询；必要时用 `scripts/cls_query.py` 执行/提取全文，校验完整性。统计模式下 `error=INCOMPLETE_DATA` 时按建议拆分重试。
 5. 0 命中时按"无结果排查清单"回退。
-6. 分析日志 → `tools/send_feishu_card.py` 发卡片。仅使用本地 Chrome 备用窗口时，最后调用 `cls_query.py --close` 关窗口。
+6. 分析日志 → `scripts/send_feishu_card.py` 发卡片。仅使用本地 Chrome 备用窗口时，最后调用 `cls_query.py --close` 关窗口。
 
 ## CLS 工具
 
 ### 构造 URL，不打开浏览器
 
-Hermes 优先路径下，ASCII 查询（包括健康检查 Step 0 / 统计查询）先生成 CLS URL，再用 Hermes 内置浏览器打开。`cls_query.py` 默认只构造 URL；只有显式加 `--use-local-chrome` 才会打开本地 Chrome。
+WorkBuddy 优先路径下，ASCII 查询（包括健康检查 Step 0 / 统计查询）先生成 CLS URL，再用 WorkBuddy 内置浏览器打开。`cls_query.py` 默认只构造 URL；只有显式加 `--use-local-chrome` 才会打开本地 Chrome。
 
 ```bash
-python3 /Users/user/.hermes/skills/xh-smart/xh-log-lookup/tools/cls_query.py \
+python3 ${WORKBUDDY_SKILL_DIR}/scripts/cls_query.py \
   --env prod \
   --query 'serviceName:"order" AND message:"20161002000002677537"' \
   --no-browser
@@ -172,7 +172,7 @@ python3 /Users/user/.hermes/skills/xh-smart/xh-log-lookup/tools/cls_query.py \
 ### 备用：本地 Chrome 专用窗口并提取文本
 
 ```bash
-python3 /Users/user/.hermes/skills/xh-smart/xh-log-lookup/tools/cls_query.py \
+python3 ${WORKBUDDY_SKILL_DIR}/scripts/cls_query.py \
   --env prod \
   --time 'now-7d,now' \
   --query 'traceId:"37426d42fdc699d1"' \
@@ -194,7 +194,7 @@ python3 /Users/user/.hermes/skills/xh-smart/xh-log-lookup/tools/cls_query.py \
 ### 备用：本地 Chrome 统计模式查询（强制完整数据）
 
 ```bash
-python3 /Users/user/.hermes/skills/xh-smart/xh-log-lookup/tools/cls_query.py \
+python3 ${WORKBUDDY_SKILL_DIR}/scripts/cls_query.py \
   --env prod \
   --time 'now-1d,now' \
   --query 'serviceName:"order" AND message:"[借款下单]下单请求结果为"' \
@@ -203,20 +203,20 @@ python3 /Users/user/.hermes/skills/xh-smart/xh-log-lookup/tools/cls_query.py \
   --use-local-chrome
 ```
 
-仅在 Hermes 不可用、页面操作失败或需要批量自动提取时使用此备用路径。统计模式下调用 `cls_query.py` 执行/提取必须使用 `--require-complete`；工具自动加载更多数据（最多 200 次）。仍不完整时返回 `error: INCOMPLETE_DATA` 和拆分建议，此时禁止分析已有数据。
+仅在 WorkBuddy 不可用、页面操作失败或需要批量自动提取时使用此备用路径。统计模式下调用 `cls_query.py` 执行/提取必须使用 `--require-complete`；工具自动加载更多数据（最多 200 次）。仍不完整时返回 `error: INCOMPLETE_DATA` 和拆分建议，此时禁止分析已有数据。
 
 ### 中文查询注入
 
-queryBase64 不支持非 ASCII。中文查询需先用 ASCII URL 加载页面，再通过页面查询框注入或从提取全文中二次过滤；本地 Chrome 备用路径可使用 AppleScript + `String.fromCharCode()` + `execCommand('insertText')` 注入。详见 `references/cls-react-contenteditable-injection.md`。
+queryBase64 不支持非 ASCII。中文查询需先用 ASCII URL 加载页面，再通过页面查询框注入或从提取全文中二次过滤；本地 Chrome 备用路径可使用 AppleScript + `String.fromCharCode()` + `execCommand('insertText')` 注入。详见 `references/common/cls-react-contenteditable-injection.md`。
 
 ### 校验入口表锚点
 
 ```bash
-python3 /Users/user/.hermes/skills/xh-smart/xh-log-lookup/tools/validate_query_anchors.py \
+python3 ${WORKBUDDY_SKILL_DIR}/scripts/validate_query_anchors.py \
   --all --summary
 ```
 
-`--all` 自动发现所有子模块，`--summary` 输出汇总表。校验不通过时，推荐查询只能作为历史线索。
+`--all` 自动发现 `references/modules/*.md`，`--summary` 输出汇总表。校验不通过时，推荐查询只能作为历史线索。
 
 ## CLS 环境与查询语法
 
@@ -241,7 +241,7 @@ URL: `https://datasight-1300455117.internal.clsconsole.tencent-cloud.com/cls/sea
 ## 飞书卡片
 
 ```bash
-python3 tools/send_feishu_card.py \
+python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py \
   --title "[emoji] 场景简述 · 时间范围" --color green \
   --cls-url "{cls_url}" --cls-url-expanded "{expanded_url}" \
   --data '{"summary_fields":[...],"analysis":"...","log_count":N}'
@@ -262,15 +262,15 @@ python3 tools/send_feishu_card.py \
 
 ## References
 
-- `references/update-master-branch.md`：更新本地 `master` 分支代码
-- `references/cls-local-chrome-access.md`：备用：本地 Chrome 专用窗口访问 CLS
-- `references/cls-dom-extraction.md`：全文提取、加载更多、CK/CS 合同号解析
-- `references/cls-query-pitfalls.md`：CLS 高频坑和恢复方式
-- `references/chinese-queryBase64-experiments.md`：中文 queryBase64 限制
-- `references/cls-react-contenteditable-injection.md`：React contenteditable 中文注入方案（String.fromCharCode + execCommand）
-- `references/feishu-card-template.md`：飞书卡片结构和按钮 URL 规则
-- `references/feishu-card-callback-handling.md`：飞书卡片按钮回调
-- `references/trace-dubbo-profile-filter.md`：Dubbo 全链路追踪（ProfileFilter CS/CR/SS/SR 标记解读 + 溯源方法论）
-- `references/cls-topic-field-reference.md`：CLS Topic 字段对照表（生产/测试环境 topic 属性与索引字段）
-- `references/efficient-query-pattern-20260517.md`：高效查询工作流（查询耗时优化、CLS 页面异常处理）
-- `references/cls-iframe-crossorigin-workflow.md`：历史废弃 iframe 方案，只作背景
+- `references/common/update-master-branch.md`：更新本地 `master` 分支代码
+- `references/common/cls-local-chrome-access.md`：备用：本地 Chrome 专用窗口访问 CLS
+- `references/common/cls-dom-extraction.md`：全文提取、加载更多、CK/CS 合同号解析
+- `references/common/cls-query-pitfalls.md`：CLS 高频坑和恢复方式
+- `references/common/chinese-queryBase64-experiments.md`：中文 queryBase64 限制
+- `references/common/cls-react-contenteditable-injection.md`：React contenteditable 中文注入方案（String.fromCharCode + execCommand）
+- `references/common/feishu-card-template.md`：飞书卡片结构和按钮 URL 规则
+- `references/common/feishu-card-callback-handling.md`：飞书卡片按钮回调
+- `references/common/trace-dubbo-profile-filter.md`：Dubbo 全链路追踪（ProfileFilter CS/CR/SS/SR 标记解读 + 溯源方法论）
+- `references/common/cls-topic-field-reference.md`：CLS Topic 字段对照表（生产/测试环境 topic 属性与索引字段）
+- `references/common/efficient-query-pattern-20260517.md`：高效查询工作流（查询耗时优化、CLS 页面异常处理）
+- `references/common/cls-iframe-crossorigin-workflow.md`：历史废弃 iframe 方案，只作背景

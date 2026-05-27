@@ -270,7 +270,7 @@ def main() -> int:
         result = {
             "error": "LOCAL_CHROME_OPT_IN_REQUIRED",
             "message": (
-                "--require-complete needs extracted CLS text. Use Hermes browser "
+                "--require-complete needs extracted CLS text. Use WorkBuddy browser "
                 "for the default path, or add --use-local-chrome only after "
                 "explicitly switching to the local Chrome backup path."
             ),
