@@ -5,17 +5,21 @@ allowed-tools:
   - Bash(python3 ${WORKBUDDY_SKILL_DIR}/scripts/cls_query.py *)
   - Bash(python3 ${WORKBUDDY_SKILL_DIR}/scripts/validate_query_anchors.py *)
   - Bash(python3 ${WORKBUDDY_SKILL_DIR}/scripts/resolve_workspace.py *)
-  - Bash(python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py *)
 disable: false
 ---
 
 # xh-log-lookup — 日志查询主控
 
-处理生产/测试环境日志查询、业务异常排查、CLS 结果及根因分析和**飞书卡片输出**。主控只负责意图分类、路由、强制约束和工具调用；业务细节在 `references/modules/` 和 `references/common/` 中。
+处理生产/测试环境日志查询、业务异常排查、CLS 结果及根因分析和飞书兼容文本输出。主控只负责意图分类、路由、强制约束和工具调用；业务细节在 `references/modules/` 和 `references/common/` 中。
 
 ## 日志服务名和项目名映射关系表
 
-`仓库路径`列为空或路径不存在时，执行 `scripts/resolve_workspace.py` 自动探测并更新映射表。
+`仓库路径`列是本地缓存，不是跨机器固定路径。路径为空或失效时，先执行 `scripts/resolve_workspace.py --check` 诊断；确认无误后再执行 `scripts/resolve_workspace.py` 更新映射表。
+
+推荐通过 `XH_WORKSPACE_ROOTS` 配置工作区根目录，可配置多个根目录，用 `:` 分隔。每个根目录会按 `{root}/{项目名}` 和 `{root}/workspace/{项目名}` 查找仓库。
+
+示例：`XH_WORKSPACE_ROOTS="/Users/user/mingh/workspace:/Users/hisense/Documents/workspace"`
+
 | serviceName | 项目名 | 仓库路径 |
 |----|----|----|
 |`order`|`order`|`/Users/hisense/Documents/workspace/order`|
@@ -54,7 +58,7 @@ disable: false
 3. **完整性关卡**：先检查结果是否完整；如果 `cls_query.py` 返回 JSON，检查是否存在 `"error": "INCOMPLETE_DATA"`。若存在：
    - 禁止对已加载数据做任何计数、汇总、占比计算
    - 必须按 `suggested_actions` 拆分查询后重试
-   - 拆分后仍不完整：飞书卡片用黄色（yellow），所有数值结论加"（采样值，非精确统计）"后缀
+   - 拆分后仍不完整：飞书兼容文本结论必须在"风险提示:"字段标注"数据不完整/采样值"，所有数值结论加"（采样值，非精确统计）"后缀
 
 4. **禁止跳过关卡**：只要 `is_complete` 为 false，统计模式下所有百分比、总数、成功率结论都无效。不存在"先看看数据再说"——要么数据完整，要么先拆分。
 
@@ -69,7 +73,7 @@ disable: false
       → is_complete=true → 正常分析，输出精确统计
       → error=INCOMPLETE_DATA → 按 suggested_actions 拆分
         → 每段都 --require-complete → 合并完整段数据 → 输出统计
-        → 某段仍不完整 → 黄色卡片 + "采样值" 标注
+        → 某段仍不完整 → 飞书兼容文本风险提示 + "采样值" 标注
 ```
 
 #### 非统计模式
@@ -120,13 +124,18 @@ disable: false
 - 使用本地 Chrome 备用路径时，禁止默认操作 `active tab of front window`。首次查询创建新的 Chrome window，后续查询复用该窗口，通过 window id 定向操作；调查结束后调用 `scripts/cls_query.py --close` 关闭窗口。
 - 不要用 `document.body.innerText.substring(0,N)` 判断结果；CLS 日志数据在页面文本后部。
 - `traceId` 查询也可能超过 20 条；必须加载全部数据进行解析
-- **分析前必须校验完整性**：统计模式下见上方"⛔ 数据统计强制约束"。非统计模式下：对比 `log_count` 与 `loaded_count`，若 `is_complete` 为 false 或 `loaded_count` 远小于 `log_count`，在飞书卡片中标注"基于 N/M 条采样分析，结论可能不完整"并使用黄色卡片。
+- **分析前必须校验完整性**：统计模式下见上方"⛔ 数据统计强制约束"。非统计模式下：对比 `log_count` 与 `loaded_count`，若 `is_complete` 为 false 或 `loaded_count` 远小于 `log_count`，在"风险提示:"字段标注"基于 N/M 条采样分析，结论可能不完整"。
 
-### 飞书输出与结论规则
+### 结论输出规则
 
-- 所有诊断结论、分析报告必须通过 `scripts/send_feishu_card.py` 发送飞书卡片，禁止直接写进聊天。只有脚本执行失败时才降级为 Markdown。
-- 卡片 **URL** 必须包含 `topic_id`、`time`、`queryBase64`；当结果集中在单线程时，URL 只带 `traceId` 即可。
-- 每次结论须包含：查了什么代码/日志前缀、CLS 查询语句/topic/时间范围、命中摘要与未命中证据、完整性状态（`loaded_count` vs `log_count`）、关键节点时间（`timestamp` 格式）、卡片发送状态。
+- 所有诊断结论、分析报告直接用 WorkBuddy/Claw 原生消息通道在当前会话输出飞书兼容文本，不再调用额外发送脚本。
+- 飞书普通消息格式契约：
+  - 允许：普通文本、换行、简单分段、短横线列表、数字编号、粗体标签、普通 URL 或 `[文本](URL)` 链接、@。
+  - 禁止：Markdown 表格、表格分隔线、代码块、HTML 表格、复杂嵌套列表、飞书卡片语法。
+  - 技能文档中的表格只用于知识组织，不得复制为最终回复格式。
+- 输出前必须自检：如果最终回复中出现 `| 时间 | 服务 | 事件 |`、`|---|---|`、`|-----|-----|`、任意以 `|` 开头且包含多个 `|` 分隔列的行，必须改写成逐行列表；如果出现 fenced code block，必须改写成普通文本。
+- CLS 链接必须包含 `topic_id`、`time`、`queryBase64`；当结果集中在单线程时，URL 只带 `traceId` 即可。
+- 每次结论须包含：查了什么代码/日志前缀、CLS 查询语句/topic/时间范围、命中摘要与未命中证据、完整性状态（`loaded_count` vs `log_count`）、关键节点时间（`timestamp` 格式）、输出状态。
 
 ## 意图分类
 
@@ -156,7 +165,7 @@ disable: false
 3. **判断是否为统计模式（见"数据统计强制约束"）。是 → `cls_query.py --method auto --require-complete`；API 完整才可统计。**
 4. 非统计模式默认 `cls_query.py --method auto`。API 不可用或结果不完整时，用返回的 `cls_url` 交给 WorkBuddy 内置浏览器；必要时再显式切换本地 Chrome 备用路径。
 5. 0 命中时按"无结果排查清单"回退。
-6. 分析日志 → `scripts/send_feishu_card.py` 发卡片。仅使用本地 Chrome 备用窗口时，最后调用 `cls_query.py --close` 关窗口。
+6. 分析日志 → 直接在当前会话输出飞书兼容文本结论。仅使用本地 Chrome 备用窗口时，最后调用 `cls_query.py --close` 关窗口。
 
 ## CLS 工具
 
@@ -261,27 +270,18 @@ URL: `https://datasight-1300455117.internal.clsconsole.tencent-cloud.com/cls/sea
 | **env** | 非索引 | 默认 `prod`；测试环境未指定具体 test 编号时不加此条件 |
 | **message** | 全文 | orderId、cid、contractNo 等非索引字段通过 message 搜索 |
 
-## 飞书卡片
+## 飞书兼容文本结论
 
-```bash
-python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py \
-  --title "[emoji] 场景简述 · 时间范围" --color green \
-  --cls-url "{cls_url}" --cls-url-expanded "{expanded_url}" \
-  --data '{"summary_fields":[...],"analysis":"...","log_count":N}'
-```
+最终结论使用字段化文本，避免表格、代码块、复杂嵌套列表和卡片语法。推荐结构：
 
-颜色：
-
-| 颜色 | 使用条件 |
-|------|----------|
-| `red` | ERROR、堆栈、流程阻断、查询未正常执行 |
-| `yellow` | WARN、业务异常、逾期、无结果但查询正常、不完整采样 |
-| `green` | 全部正常、全部 SUCCESS |
-| `blue` | 常规信息查询 |
-
-### 结果输出前自检
-
-当你准备在聊天中写出诊断结论时——**停下来**，把结论写进 `send_feishu_card.py` 的 `--data '{"analysis":"..."}'`，不要写进聊天。
+结论: 一句话说明结果、根因或当前健康状态。
+查询范围: 环境、时间范围、topic、CLS 查询语句。
+命中摘要: 命中数量、关键 traceId/orderId/contractNo/cid、完整性状态。
+关键证据: 按时间顺序列出关键日志节点，保留原始时间戳；多条证据必须用换行和短横线分隔，不得使用表格。
+- 15:30:50.784 thor-app-gateway: 发起还款试算，orderId=...
+- 15:30:50.813 order: ERROR NullPointerException ...
+风险提示: 数据不完整、采样分析、查询失败或无结果时必须说明；无风险时写"暂无"。
+链接: 附 `cls_url` 和必要时的 `expanded_url`。
 
 ## References
 
@@ -292,8 +292,6 @@ python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py \
 - `references/common/cls-api-query.md`：CLS HTTP API 直查 payload、返回结构和 fallback 规则
 - `references/common/chinese-queryBase64-experiments.md`：中文 queryBase64 限制
 - `references/common/cls-react-contenteditable-injection.md`：React contenteditable 中文注入方案（String.fromCharCode + execCommand）
-- `references/common/feishu-card-template.md`：飞书卡片结构和按钮 URL 规则
-- `references/common/feishu-card-callback-handling.md`：飞书卡片按钮回调
 - `references/common/trace-dubbo-profile-filter.md`：Dubbo 全链路追踪（ProfileFilter CS/CR/SS/SR 标记解读 + 溯源方法论）
 - `references/common/cls-topic-field-reference.md`：CLS Topic 字段对照表（生产/测试环境 topic 属性与索引字段）
 - `references/common/efficient-query-pattern-20260517.md`：高效查询工作流（查询耗时优化、CLS 页面异常处理）

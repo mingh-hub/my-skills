@@ -51,6 +51,6 @@ order (OrderRouteService, LoanOrderServiceImpl, ReleaseHoldOrderServiceImpl), lo
 
 order, loki, underwriter, frontendcenter, account-gateway
 
-## 提前结清飞书卡片模板
+## 提前结清历史飞书卡片模板
 
-提前结清失败的标准化飞书卡片模板见：`references/modules/loan/early-settle-card-template.md`。包含调用链展示、资方错误、诊断结论和按钮配置。
+提前结清失败的历史飞书卡片模板见：`references/modules/loan/early-settle-card-template.md`。当前主流程使用飞书兼容文本结论，该模板只作手工排查或恢复卡片能力时参考。

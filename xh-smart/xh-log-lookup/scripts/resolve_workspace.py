@@ -10,7 +10,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import subprocess
+import os
 import sys
 from pathlib import Path
 
@@ -21,14 +21,25 @@ from skill_config import (
 )
 
 SKILL_MD = SKILL_ROOT / "SKILL.md"
+REPO_MARKERS = (".git", "pom.xml", "build.gradle", "settings.gradle", "package.json")
 
-SEARCH_BASES = [
-    Path.home() / "Documents" / "workspace",
-    Path.home() / "workspace",
-    Path.home() / "projects",
-    Path.home() / "dev",
-    Path.home() / "code",
-]
+
+def _dedupe_paths(paths: list[Path]) -> list[Path]:
+    seen: set[str] = set()
+    result: list[Path] = []
+    for path in paths:
+        resolved = str(path.expanduser())
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        result.append(path.expanduser())
+    return result
+
+
+def _split_env_paths(value: str | None) -> list[Path]:
+    if not value:
+        return []
+    return [Path(part).expanduser() for part in value.split(os.pathsep) if part.strip()]
 
 
 def _infer_search_dirs(rows: list[dict[str, str]]) -> list[Path]:
@@ -42,30 +53,31 @@ def _infer_search_dirs(rows: list[dict[str, str]]) -> list[Path]:
     return list(parents)
 
 
-def find_project(project_name: str, extra_dirs: list[Path]) -> Path | None:
-    for base in extra_dirs:
-        candidate = base / project_name
-        if candidate.is_dir():
-            return candidate
+def _is_trusted_repo(path: Path) -> bool:
+    return path.is_dir() and any((path / marker).exists() for marker in REPO_MARKERS)
 
-    for base in SEARCH_BASES:
-        candidate = base / project_name
-        if candidate.is_dir():
-            return candidate
 
-    try:
-        result = subprocess.run(
-            ["mdfind", f"kMDItemFSName == '{project_name}' && kMDItemContentType == 'public.folder'"],
-            capture_output=True, text=True, timeout=10,
-        )
-        for line in result.stdout.strip().splitlines():
-            p = Path(line)
-            if p.name == project_name and (p / ".git").is_dir():
-                return p
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        pass
+def _find_candidates(project_name: str, roots: list[Path]) -> list[Path]:
+    candidates: list[Path] = []
+    for base in roots:
+        for candidate in (base / project_name, base / "workspace" / project_name):
+            if _is_trusted_repo(candidate):
+                candidates.append(candidate)
+    return _dedupe_paths(candidates)
 
-    return None
+
+def build_search_roots(rows: list[dict[str, str]]) -> list[Path]:
+    roots = _split_env_paths(os.environ.get("XH_WORKSPACE_ROOTS"))
+    roots.extend(_infer_search_dirs(rows))
+    return _dedupe_paths(roots)
+
+
+def find_project(project_name: str, roots: list[Path]) -> tuple[Path | None, list[Path]]:
+    candidates = _find_candidates(project_name, roots)
+
+    if len(candidates) == 1:
+        return candidates[0], candidates
+    return None, candidates
 
 
 def unique_projects(rows: list[dict[str, str]]) -> dict[str, str]:
@@ -115,16 +127,17 @@ def update_skill_md(rows: list[dict[str, str]]) -> None:
 
 def cmd_resolve(rows: list[dict[str, str]], dry_run: bool) -> int:
     projects = unique_projects(rows)
-    extra_dirs = _infer_search_dirs(rows)
+    search_roots = build_search_roots(rows)
     updated = 0
     missing = 0
+    conflicts = 0
 
     for proj, current_path in projects.items():
-        if current_path and Path(current_path).is_dir():
+        if current_path and _is_trusted_repo(Path(current_path)):
             print(f"  OK  {proj} -> {current_path}")
             continue
 
-        found = find_project(proj, extra_dirs)
+        found, candidates = find_project(proj, search_roots)
         if found:
             new_path = str(found)
             print(f"  FIX {proj} -> {new_path}" + (" (dry run)" if dry_run else ""))
@@ -133,6 +146,11 @@ def cmd_resolve(rows: list[dict[str, str]], dry_run: bool) -> int:
                     if row["project"] == proj:
                         row["path"] = new_path
             updated += 1
+        elif candidates:
+            print(f"  !!! {proj} -> multiple candidates, choose one with --set-project {proj} <path>")
+            for candidate in candidates:
+                print(f"      - {candidate}")
+            conflicts += 1
         else:
             print(f"  ???  {proj} -> not found")
             missing += 1
@@ -141,8 +159,11 @@ def cmd_resolve(rows: list[dict[str, str]], dry_run: bool) -> int:
         update_skill_md(rows)
         print(f"\nUpdated {updated} project paths in SKILL.md")
 
+    if conflicts:
+        print(f"\n{conflicts} project(s) have multiple trusted candidates")
     if missing:
-        print(f"\n{missing} project(s) could not be auto-detected")
+        print(f"{missing} project(s) could not be auto-detected")
+    if conflicts or missing:
         return 1
     return 0
 

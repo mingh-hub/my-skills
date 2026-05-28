@@ -1,4 +1,4 @@
-# 飞书卡片模板
+# 飞书卡片模板（历史参考）
 
 ## 目录
 
@@ -7,13 +7,13 @@
 - 必填内容
 - 卡片结构
 - 按钮 URL
-- Markdown 降级
+- 历史 Markdown 降级
 
 ## 何时读取
 
-当需要手工构造或排查 `scripts/send_feishu_card.py` 发送的卡片内容时读取。常规查询优先使用 `xh-log-lookup/SKILL.md` 的 WorkBuddy 内置浏览器路径；需要卡片按钮 URL 时，可用 `cls_query.py` 默认 URL-only 输出的 `cls_url` / `expanded_url`。
+当前 `xh-log-lookup` 主流程不再发送飞书卡片，默认直接输出飞书兼容文本结论。只有需要手工构造或排查历史 `scripts/send_feishu_card.py` 卡片内容时才读取本文；需要 CLS 链接时，可用 `cls_query.py` 输出的 `cls_url` / `expanded_url`。
 
-主流程见 `../SKILL.md`。所有日志查询结果必须输出飞书卡片；不可用时使用 Markdown 链接降级。
+主流程见 `../SKILL.md`。本文只作为历史卡片模板参考，不再是默认输出规范。
 
 ## 1. 适用范围
 
@@ -22,7 +22,7 @@
 - 生产 / 测试环境
 - 命中 / 未命中
 - 正常 / 业务异常 / 系统异常
-- 交互式卡片不可用时的 Markdown 降级输出
+- 交互式卡片不可用时的历史 Markdown 降级输出
 
 ## 2. 标题规范
 
@@ -211,9 +211,9 @@ https://datasight-1300455117.internal.clsconsole.tencent-cloud.com/cls/search?re
 - 真实中文条件不要进入 `queryBase64`；优先从 WorkBuddy 页面全文或本地 Chrome 备用路径提取的全文里二次过滤
 - 详细规则见 `chinese-queryBase64-experiments.md` 和 `cls-react-contenteditable-injection.md`
 
-## 7. 降级 Markdown
+## 7. 历史降级 Markdown
 
-当飞书交互式卡片不可用时，发送 Markdown：
+以下为历史卡片方案的 Markdown 降级示例。当前主流程不要读取本节作为最终输出规范，最终回复必须遵循 `SKILL.md` 的飞书兼容文本格式，且不得输出 Markdown 表格。
 
 ```markdown
 ### ✅ 下单正常 · 05-17 09:00~10:00
@@ -240,4 +240,4 @@ https://datasight-1300455117.internal.clsconsole.tencent-cloud.com/cls/search?re
 - 如果查询结果返回了明确 `traceId`，跳转链接和扩大查询范围链接必须将该 `traceId` 带入查询条件。
 - 含中文查询时，`queryBase64` 使用 ASCII 占位查询，不要直接编码中文。
 - 无结果但查询正常时用黄色卡片；查询未正常执行时用红色卡片。
-- Markdown 降级时，仍必须保留两个链接：`🔗 跳转链接 ｜ 查看 CLS 完整结果` 和 `⏱ 扩大查询范围 ｜ 时间前后各扩展 1 天`。
+- 历史 Markdown 降级时，仍必须保留两个链接：`🔗 跳转链接 ｜ 查看 CLS 完整结果` 和 `⏱ 扩大查询范围 ｜ 时间前后各扩展 1 天`。

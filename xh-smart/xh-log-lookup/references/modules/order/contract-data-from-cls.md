@@ -87,7 +87,7 @@ Step 3: 构造 CLS 查询 → 优先用 WorkBuddy 内置浏览器打开生产 to
 Step 4: 提取页面文本结果
 Step 5: 去重汇总 → 统计 unique contractNo、orderStatus、剩余本金等
 Step 6: 说明限制 — 仅30天有活动的合同
-Step 7: 发飞书卡片
+Step 7: 输出飞书兼容文本结论
 ```
 
 ## 实操样例
@@ -113,7 +113,7 @@ serviceName:"order" AND (message:"{contractNo1}" OR message:"{contractNo2}" OR .
 
 然后在结果中按 contractNo 分组、按时间排序，提取每个合同的 sync 时间点和状态。
 
-**示例**（两合同同步时间对比）：
+**示例**（两合同同步时间对比；最终回复时按主控要求改写为逐行文本，不要直接输出表格）：
 
 | contractNo | 同步时间 | 触发原因 |
 |-----------|---------|---------|

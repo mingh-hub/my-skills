@@ -1,10 +1,10 @@
-# 飞书卡片交互按钮回调处理
+# 飞书卡片交互按钮回调处理（历史参考）
 
-主流程见 `../SKILL.md`。本文记录飞书互动卡片按钮的回调处理逻辑。
+当前 `xh-log-lookup` 主流程不再发送飞书卡片。本文只记录历史飞书互动卡片按钮的回调处理逻辑。
 
 ## 适用场景
 
-当飞书卡片包含交互式按钮（非 URL 跳转按钮）时，用户点击后飞书发送回调事件，需要处理并执行后续查询。
+仅当手工启用历史飞书卡片并包含交互式按钮（非 URL 跳转按钮）时，用户点击后飞书发送回调事件，需要处理并执行后续查询。
 
 ## 按钮定义
 
@@ -27,9 +27,9 @@
 1. **解析 action**：从 JSON 中提取 `action` 字段
 2. **根据 action 执行对应查询**：
    - **`query_full_trace`**：搜索 `traceId:"<trace_id>"`（不限 serviceName，跨服务全链路），时间范围使用原始卡片的时间范围
-   - **`expand_time_range`**：解析 `current_time_range`（如 `now-5m,now`），**前后各增加 1 天**（如 `now-5m,now` → `now-1d-5m,now+1d`）。如果计算后结束时间 > 当前时间，截止到 `now`。使用 `original_query` 搜索并重新输出新卡片
-   - **`query_errors_only`**：搜索 `traceId:"<trace_id>" AND level:"ERROR"`，仅返回错误日志的卡片
-3. **输出结果**：按照标准卡片构建流程，发送新的互动卡片到原始聊天
+   - **`expand_time_range`**：解析 `current_time_range`（如 `now-5m,now`），**前后各增加 1 天**（如 `now-5m,now` → `now-1d-5m,now+1d`）。如果计算后结束时间 > 当前时间，截止到 `now`。使用 `original_query` 搜索并输出新结论
+   - **`query_errors_only`**：搜索 `traceId:"<trace_id>" AND level:"ERROR"`，仅返回错误日志结论
+3. **输出结果**：当前主流程使用飞书兼容文本结论；只有手工启用历史卡片工具时才发送新的互动卡片到原始聊天
 
 ## 中文自动转码
 
