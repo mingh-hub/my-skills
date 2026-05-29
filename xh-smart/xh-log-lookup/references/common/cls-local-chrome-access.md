@@ -170,7 +170,7 @@ osascript /tmp/script.applescript
 
 ## 关闭 CLS 窗口
 
-调查结束（飞书卡片发送成功后），关闭 CLS 窗口避免累积：
+调查结束并输出最终文本结论后，关闭 CLS 窗口避免累积：
 
 ```bash
 python3 ${WORKBUDDY_SKILL_DIR}/scripts/cls_query.py --close

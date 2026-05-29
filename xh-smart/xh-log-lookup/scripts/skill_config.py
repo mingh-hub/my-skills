@@ -41,7 +41,7 @@ def _split_row(line: str) -> list[str]:
 def parse_mapping_table(text: str) -> list[dict[str, str]]:
     """Parse the service mapping table from SKILL.md text.
 
-    Returns list of {"serviceName": ..., "project": ..., "path": ...}.
+    Returns list of {"serviceName": ..., "project": ..., "alias": ..., "path": ...}.
     """
     rows: list[dict[str, str]] = []
     in_table = False
@@ -69,22 +69,29 @@ def parse_mapping_table(text: str) -> list[dict[str, str]]:
 
         service = _strip_backticks(cells[0])
         project = _strip_backticks(cells[1]) if len(cells) > 1 else ""
-        path = _strip_backticks(cells[2]) if len(cells) > 2 else ""
+        if len(cells) > 3:
+            alias = _strip_backticks(cells[2])
+            path = _strip_backticks(cells[3])
+        else:
+            alias = ""
+            path = _strip_backticks(cells[2]) if len(cells) > 2 else ""
 
         if service:
-            rows.append({"serviceName": service, "project": project, "path": path})
+            rows.append({"serviceName": service, "project": project, "alias": alias, "path": path})
 
     return rows
 
 
 def render_mapping_table(rows: list[dict[str, str]]) -> str:
     lines = [
-        "| serviceName | 项目名 | 仓库路径 |",
-        "|----|----|----|",
+        "| serviceName | 项目名 | 别名 | 仓库路径 |",
+        "|----|----|----|----|",
     ]
     for row in rows:
         path_cell = f"`{row['path']}`" if row["path"] else ""
-        lines.append(f"|`{row['serviceName']}`|`{row['project']}`|{path_cell}|")
+        alias = row.get("alias", "")
+        alias_cell = f"`{alias}`" if alias else ""
+        lines.append(f"|`{row['serviceName']}`|`{row['project']}`|{alias_cell}|{path_cell}|")
     return "\n".join(lines)
 
 
