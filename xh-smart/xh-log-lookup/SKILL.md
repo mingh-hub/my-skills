@@ -14,27 +14,36 @@ disable: false
 
 ## 日志服务名和项目名映射关系表
 
+这张表是客户订单组负责的日志服务清单。`serviceName` 列用于 CLS 查询范围，`别名`列用于把用户自然语言服务名映射到一组 `serviceName`，`项目名`列只用于定位本地源码仓库；三者不要混用。
+
+服务范围识别按以下优先级执行：
+- 用户明确说出具体 `serviceName`（如 `order`、`protocol-batch`）时，只查该单个服务。
+- 用户说出表中某个`别名`时，查所有同别名行对应的 `serviceName`。`别名`列可填写多个自然语言别名，使用中文逗号 `，` 或英文逗号 `,` 分隔。
+- 用户说"我们组"、"客户订单组"、"这批服务"或没有指定具体服务但要求查看本组日志情况时，默认以本表 `serviceName` 列的全部服务作为查询覆盖范围。
+
+同一个`别名`可对应多个 `serviceName`，同一个 `serviceName` 也可以挂多个别名。例如"订单服务异常"要展开到表中所有包含`订单服务`或`订单`别名的服务后再查询和分析。
+
 `仓库路径`列是本地缓存，不是跨机器固定路径。路径为空或失效时，先执行 `scripts/resolve_workspace.py --check` 诊断；确认无误后再执行 `scripts/resolve_workspace.py` 更新映射表。
 
 推荐通过 `XH_WORKSPACE_ROOTS` 配置工作区根目录，可配置多个根目录，用 `:` 分隔。每个根目录会按 `{root}/{项目名}` 和 `{root}/workspace/{项目名}` 查找仓库。
 
 示例：`XH_WORKSPACE_ROOTS="/Users/user/mingh/workspace:/Users/hisense/Documents/workspace"`
 
-| serviceName | 项目名 | 仓库路径 |
-|----|----|----|
-|`order`|`order`|`/Users/hisense/Documents/workspace/order`|
-|`order-batch`|`order`|`/Users/hisense/Documents/workspace/order`|
-|`order-batch-timing`|`order`|`/Users/hisense/Documents/workspace/order`|
-|`h5-loan`|`H5LoanProject`|`/Users/hisense/Documents/workspace/H5LoanProject`|
-|`protocol`|`protocol`|`/Users/hisense/Documents/workspace/protocol`|
-|`protocol-batch`|`protocol`|`/Users/hisense/Documents/workspace/protocol`|
-|`protocol-batch-timing`|`protocol`|`/Users/hisense/Documents/workspace/protocol`|
-|`cif`|`cif`|`/Users/hisense/Documents/workspace/cif`|
-|`account`|`account`|`/Users/hisense/Documents/workspace/account`|
-|`datainquiry`|`data-inquiry`|`/Users/hisense/Documents/workspace/data-inquiry`|
-|`loki-webapp`|`loki`|`/Users/hisense/Documents/workspace/loki`|
-|`weixin-h5api`|`weixin_h5api`|`/Users/hisense/Documents/workspace/weixin_h5api`|
-|`app-server`|`appServer`|`/Users/hisense/Documents/workspace/appServer`|
+| serviceName | 项目名 | 别名 | 仓库路径 |
+|----|----|----|----|
+|`order`|`order`|`订单服务,订单`|`/Users/hisense/Documents/workspace/order`|
+|`order-batch`|`order`|`订单服务,订单`|`/Users/hisense/Documents/workspace/order`|
+|`order-batch-timing`|`order`|`订单服务,订单`|`/Users/hisense/Documents/workspace/order`|
+|`h5-loan`|`H5LoanProject`|`借款服务,借款`|`/Users/hisense/Documents/workspace/H5LoanProject`|
+|`protocol`|`protocol`|`协议服务,协议`|`/Users/hisense/Documents/workspace/protocol`|
+|`protocol-batch`|`protocol`|`协议服务,协议`|`/Users/hisense/Documents/workspace/protocol`|
+|`protocol-batch-timing`|`protocol`|`协议服务,协议`|`/Users/hisense/Documents/workspace/protocol`|
+|`cif`|`cif`|`客户信息,客户基础信息,客户信息服务`|`/Users/hisense/Documents/workspace/cif`|
+|`account`|`account`|`账户信息,客户账户信息`|`/Users/hisense/Documents/workspace/account`|
+|`datainquiry`|`data-inquiry`|`数据查询`|`/Users/hisense/Documents/workspace/data-inquiry`|
+|`loki-webapp`|`loki`|`loki,loki放款`|`/Users/hisense/Documents/workspace/loki`|
+|`weixin-h5api`|`weixin_h5api`|-|`/Users/hisense/Documents/workspace/weixin_h5api`|
+|`app-server`|`appServer`|-|`/Users/hisense/Documents/workspace/appServer`|
 
 ## 强制规则
 
@@ -89,8 +98,9 @@ disable: false
   - **用户提供 traceId**：直接执行 `traceId:"{value}"`（不加 `serviceName`）；查不到时扩大时间：`now-1d,now` → `now-7d,now` → `now-30d,now`
   - **用户未提供 traceId**：按后续步骤用业务标识符定位日志后，从提取的 innerText 中识别 `traceid` 列值（通常为 16 位或 32 位 hex，如 `110e6550d81fb1bc`、`b4d5cc63c42611adb4d5cc63c42611ad`），再执行 `traceId:"{提取值}"` 做全链路分析；不要自行截断成前 16 位
   - **traceId ≠ TID**：两者是不同的索引字段，不要混淆。以 `traceid` 列为准
-  - 日志无法获取明确结果时可结合项目代码
+- 日志无法获取明确结果时可结合项目代码
 - 每次会话首次执行**代码锚点**校验前，按 `references/common/update-master-branch.md` 更新对应服务仓库的 master 分支（路径见映射表`仓库路径`列）
+- 本组范围查询时，服务范围以"日志服务名和项目名映射关系表"的 `serviceName` 列为准；需要看代码时，再用同一行的`项目名`和`仓库路径`定位源码。
 - 分析要查的数据是否在子模块的流程追踪入口，是的话可以通过日志锚点查询，不是的话分析本地项目路径，确认查询`sql`,服务名参考上面`日志服务名和项目名映射关系表`；子模块入口表格里的推荐查询只是通过代码锚点校验后的首查模板，不是唯一真相。
 - 执行入口表格推荐查询前，先校验 `方法入口`、`serviceName` 和固定 `message` 片段是否仍能和当前代码匹配；可用 `scripts/validate_query_anchors.py` 辅助检查。
 - 标识符值优先直接放入 `message:\"{value}\"`，禁止加 `cid:`、`orderId:`、`contractNo:`
@@ -148,6 +158,10 @@ disable: false
 
 ## 业务路由
 
+用户问"我们组"、"客户订单组"、"这批服务"的整体日志、异常、健康情况时，不需要再追问服务范围；按上方映射表 `serviceName` 列覆盖全部客户订单组服务。若用户同时给出具体业务关键词，再按下表选择业务模块并在该模块内覆盖相关服务。
+
+用户问表中`别名`对应的整体日志、异常、健康情况时，不需要追问具体 `serviceName`；按同别名的全部 `serviceName` 查询。用户明确写出具体 `serviceName` 时，才只查该单个服务。
+
 | 关键词 | 业务模块 reference | 业务模块 |
 |--------|---------|--------|
 | 签约、重签、重新签约、RESIGN、SIGNING_ISSUE、协议、绑卡、银行卡签约、代扣协议、支付协议 | `references/modules/sign.md` | 签约模块 |
@@ -160,7 +174,7 @@ disable: false
 
 ## 标准工作流
 
-1. 提取环境、时间范围、标识符 → 分类意图 → 路由到业务模块 reference。
+1. 提取环境、时间范围、标识符和服务范围；服务范围按"具体 `serviceName` → 表中`别名`对应服务组 → 我们组/客户订单组全表服务"识别 → 分类意图 → 路由到业务模块 reference。
 2. 代码锚点校验（规则见上文"推荐查询锚点校验"），组装 CLS 查询。
 3. **判断是否为统计模式（见"数据统计强制约束"）。是 → `cls_query.py --method auto --require-complete`；API 完整才可统计。**
 4. 非统计模式默认 `cls_query.py --method auto`。API 不可用或结果不完整时，用返回的 `cls_url` 交给 WorkBuddy 内置浏览器；必要时再显式切换本地 Chrome 备用路径。

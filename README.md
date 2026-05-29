@@ -41,6 +41,8 @@ my-skills/
 | xh-log-lookup-repay | `xh-smart/xh-log-lookup/xh-log-lookup-repay/` | 1.1.0 | 还款模块 — 还款、扣款、聚合支付、好友代付 |
 | xh-sso-access | `xh-smart/xh-sso-access/` | 2.0.0 | SSO 会话管理 — Argus/JANUS/PMP 登录态维护 |
 
+`xh-log-lookup/SKILL.md` 中的 `serviceName` 映射表同时也是客户订单组的服务范围清单。`serviceName` 是 CLS 查询字段，`别名` 是自然语言服务范围入口，`项目名`仅用于定位源码仓库；`别名`列可以写多个值，用逗号分隔，多个 `serviceName` 也可以共用同一个别名集合，例如 `订单服务,订单`。
+
 ## 工具
 
 | 工具 | 路径 | 说明 |
