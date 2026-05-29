@@ -236,9 +236,8 @@ def resolve_chat(query, window_minutes=15):
         return {}
 
     start_15 = _recent_start(15)
-    start_120 = _recent_start(120)
     searches = [
-        ("group_at_bot", _search_messages(query=query, start=start_120, chat_type="group", at_bot=True)),
+        ("group_at_bot", _search_messages(query=query, start=start_15, chat_type="group", at_bot=True)),
         ("p2p", _search_messages(query=query, start=start_15, chat_type="p2p", at_bot=False)),
     ]
     candidates = []
@@ -269,7 +268,7 @@ def resolve_chat(query, window_minutes=15):
                              ensure_ascii=False), file=sys.stderr)
             return {}
         matched_count += source_count
-        source_window = 120 if source == "group_at_bot" else 15
+        source_window = 15
         strategies.append(f"exact_query_{source}_{source_window}m")
         if source_count > 1:
             return {
@@ -303,7 +302,7 @@ def resolve_chat(query, window_minutes=15):
 
     msg_id, source = candidates[0]
     expected_chat_type = "group" if source == "group_at_bot" else "p2p"
-    search_strategy = strategies[0] if len(strategies) == 1 else f"exact_query_{source}_{120 if source == 'group_at_bot' else 15}m"
+    search_strategy = strategies[0] if len(strategies) == 1 else f"exact_query_{source}_15m"
 
     cmd = f"lark-cli im +messages-mget --message-ids '{msg_id}' --as bot"
     detail_result = _lark_run(cmd)
