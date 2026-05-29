@@ -33,7 +33,7 @@ my-skills/
 
 | 技能 | 路径 | 版本 | 说明 |
 | ---- | ---- | ---- | ---- |
-| xh-log-lookup | `xh-smart/xh-log-lookup/` | 2.0.2 | 日志查询主控，负责意图分类、业务路由、CLS 查询和飞书兼容文本分析输出 |
+| xh-log-lookup | `xh-smart/xh-log-lookup/` | 2.0.2 | 日志查询主控，负责意图分类、业务路由、CLS 查询和飞书卡片优先输出，发送失败时降级为飞书兼容文本 |
 | xh-log-lookup-order | `xh-smart/xh-log-lookup/xh-log-lookup-order/` | 2.1.0 | 订单模块 — 下单、借款、续签、拦截、反欺诈 |
 | xh-log-lookup-sign | `xh-smart/xh-log-lookup/xh-log-lookup-sign/` | 1.0.0 | 签约模块 — 签约、重签、绑卡、代扣协议 |
 | xh-log-lookup-benefit | `xh-smart/xh-log-lookup/xh-log-lookup-benefit/` | 1.1.0 | 权益模块 — 会员、优惠券、乐活卡 |
@@ -57,6 +57,7 @@ my-skills/
 - **macOS** — 仅本地浏览器兜底路径需要 AppleScript 驱动 Google Chrome
 - **Python 3.9+** — 主要工具仅依赖标准库，无需 pip install
 - **Google Chrome** — 仅 WorkBuddy 不可用、需要本地 Chrome 兜底访问和日志提取时需要
+- **WorkBuddy/飞书运行环境** — `xh-log-lookup` 优先通过 `send_feishu_card.py` + `lark-cli` 发送飞书卡片；运行侧可提供当前会话 ID（如 `FEISHU_CURRENT_CHAT_ID` / `AGENT_CURRENT_CHAT_ID`），缺失时用用户原始问题 + 最近时间窗精确反查群聊 @Tom 或私聊 p2p 来源，失败或来源不唯一时降级为当前会话文本回复
 - 可选：`cryptography` Python 包（仅 `test_encrypt.py` 需要）
 
 ## 仓库路径自动定位

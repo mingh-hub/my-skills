@@ -5,12 +5,16 @@ allowed-tools:
   - Bash(python3 ${WORKBUDDY_SKILL_DIR}/scripts/cls_query.py *)
   - Bash(python3 ${WORKBUDDY_SKILL_DIR}/scripts/validate_query_anchors.py *)
   - Bash(python3 ${WORKBUDDY_SKILL_DIR}/scripts/resolve_workspace.py *)
+  - Bash(python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py *)
+  - Bash(LARK_CLI_NO_PROXY=1 lark-cli im +messages-search *)
+  - Bash(LARK_CLI_NO_PROXY=1 lark-cli im +messages-mget *)
+  - Bash(LARK_CLI_NO_PROXY=1 lark-cli im +messages-send *)
 disable: false
 ---
 
 # xh-log-lookup — 日志查询主控
 
-处理生产/测试环境日志查询、业务异常排查、CLS 结果及根因分析和飞书兼容文本输出。主控只负责意图分类、路由、强制约束和工具调用；业务细节在 `references/modules/` 和 `references/common/` 中。
+处理生产/测试环境日志查询、业务异常排查、CLS 结果及根因分析，默认优先通过飞书卡片输出，失败时降级为飞书兼容文本。主控只负责意图分类、路由、强制约束和工具调用；业务细节在 `references/modules/` 和 `references/common/` 中。
 
 ## 日志服务名和项目名映射关系表
 
@@ -46,6 +50,13 @@ disable: false
 |`app-server`|`appServer`|-|`/Users/hisense/Documents/workspace/appServer`|
 
 ## 强制规则
+
+### 触发门禁
+
+- 群聊中只有明确 `@Tom` 或 WorkBuddy/Claw 已判定为对 Tom 的直接提及时，才触发日志查询和飞书卡片发送。
+- 群聊消息未 `@Tom` 时，立即停止；不要查询 CLS、不要读取本地代码、不要发送飞书卡片，也不要输出诊断结论。
+- 私聊 Tom 时不需要 `@Tom`，直接按本技能流程处理，并优先把飞书卡片发送回该私聊会话。
+- 触发后，发送目标必须是当前提问来源；无法确认来源或卡片发送失败时，只能在当前会话输出纯文本 fallback。
 
 ### 数据统计强制约束
 
@@ -138,14 +149,81 @@ disable: false
 
 ### 结论输出规则
 
-- 所有诊断结论、分析报告直接用 WorkBuddy/Claw 原生消息通道在当前会话输出飞书兼容文本，不再调用额外发送脚本。
-- 飞书普通消息格式契约：
+- 诊断结论必须先调用 `scripts/send_feishu_card.py` 发送飞书交互式卡片到当前提问来源；发送脚本返回非 0 时，才降级为当前会话纯文本 fallback。禁止在未调用发送脚本前直接输出最终文本结论。
+- 飞书卡片消息格式：
+  - 可以使用卡片 native table、lark_md、代码块、链接和按钮。
+  - 群聊卡片可在正文中 @ 提问者；私聊场景不需要 @。
+  - CLS 链接必须包含 `topic_id`、`time`、`queryBase64`；当结果集中在单线程时，URL 只带 `traceId` 即可。
+- 纯文本 fallback 格式契约：
   - 允许：普通文本、换行、简单分段、短横线列表、数字编号、粗体标签、普通 URL 或 `[文本](URL)` 链接、@。
   - 禁止：Markdown 表格、表格分隔线、代码块、HTML 表格、复杂嵌套列表、飞书卡片语法。
-  - 技能文档中的表格只用于知识组织，不得复制为最终回复格式。
-- 输出前必须自检：如果最终回复中出现 `| 时间 | 服务 | 事件 |`、`|---|---|`、`|-----|-----|`、任意以 `|` 开头且包含多个 `|` 分隔列的行，必须改写成逐行列表；如果出现 fenced code block，必须改写成普通文本。
-- CLS 链接必须包含 `topic_id`、`time`、`queryBase64`；当结果集中在单线程时，URL 只带 `traceId` 即可。
-- 每次结论须包含：查了什么代码/日志前缀、CLS 查询语句/topic/时间范围、命中摘要与未命中证据、完整性状态（`loaded_count` vs `log_count`）、关键节点时间（`timestamp` 格式）、输出状态。
+  - 输出前必须自检：如果最终回复中出现 `| 时间 | 服务 | 事件 |`、`|---|---|`、`|-----|-----|`、任意以 `|` 开头且包含多个 `|` 分隔列的行，必须改写成逐行列表；如果出现 fenced code block，必须改写成普通文本。
+- 每次结论须包含：查了什么代码/日志前缀、CLS 查询语句/topic/时间范围、命中摘要与未命中证据、完整性状态（`loaded_count` vs `log_count`）、关键节点时间（`timestamp` 格式）、CLS URL 链接、卡片发送状态。
+
+### 来源识别与飞书卡片发送
+
+技能被触发后，在输出最终结论前执行以下流程：
+
+1. **必须先调用发送脚本**：最终结论生成后，先执行 `send_feishu_card.py`。不要先输出普通文本结论；只有发送脚本返回非 0 或明确失败状态时，才输出纯文本 fallback。
+
+2. **来源优先级**：`--chat` 是人工显式指定目标，优先级最高。WorkBuddy 正常路径必须使用 `--resolve-chat --query "{用户原始问题}"`，并以精确反查得到的唯一 `chat_id` 作为发送目标。`FEISHU_CURRENT_CHAT_ID` / `AGENT_CURRENT_CHAT_ID` 等环境变量只作为未传 `--resolve-chat` 时的兼容路径，不能覆盖或短路精确反查结果。
+
+3. **反查来源**：`--resolve-chat` 必须用用户原始问题文本精确搜索最近时间窗内的群聊 @Bot 消息和私聊 p2p 消息。`{用户原始问题}` 使用触发 Tom 的原始问题正文；群聊去掉 `@Tom` 和首尾空白，私聊直接使用用户输入正文；不要改写、总结或替换成分析后的标题。
+
+   群聊来源搜索：
+   ```bash
+   LARK_CLI_NO_PROXY=1 lark-cli im +messages-search \
+     --as user \
+     --query "{用户问题文本}" \
+     --chat-type group \
+     --sender-type user \
+     --at-chatter-ids "ou_ae0341a3578d833a22b5f2927b103988" \
+     --start "{当前时间 - 15 分钟}" \
+     --page-limit 1 \
+     --format json
+   ```
+
+   私聊来源搜索：
+   ```bash
+   LARK_CLI_NO_PROXY=1 lark-cli im +messages-search \
+     --as user \
+     --query "{用户问题文本}" \
+     --chat-type p2p \
+     --sender-type user \
+     --start "{当前时间 - 15 分钟}" \
+     --page-limit 1 \
+     --format json
+   ```
+
+4. **获取详情**：用 Bot 身份获取消息详情（含 chat_id、sender）。
+   ```bash
+   LARK_CLI_NO_PROXY=1 lark-cli im +messages-mget \
+     --message-ids "{message_id}" \
+     --as bot
+   ```
+
+5. **解析结果**：提取 `chat_id`、`chat_type`、`sender.open_id`。
+   - 群聊和私聊合并后命中 0 条 → 搜不到来源，fallback 为当前会话纯文本
+   - 群聊和私聊合并后命中 1 条，且 `messages-mget` 返回的 `chat_type` 与搜索分支一致 → 唯一匹配，发卡片到该 chat_id
+   - 群聊和私聊合并后命中 ≥2 条 → 来源不唯一，不发卡片，fallback 当前会话纯文本，并说明最近 15 分钟窗口内同 query 多命中
+   - 搜索分支与 `messages-mget` 的 `chat_type` 不一致 → 来源异常，不发卡片，fallback 当前会话纯文本
+
+6. **发送卡片**：
+   ```bash
+   python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py \
+     --resolve-chat --query "{用户原始问题}" \
+     --resolve-window-minutes 15 \
+     --at-sender \
+     --title "..." --color "..." --data "..."
+   ```
+   - 正常路径必须保留 `--resolve-chat --query`；只要传入 `--resolve-chat`，脚本就必须使用原始问题 + 时间窗精确反查群聊和私聊来源，环境变量不得短路发送目标
+   - `--at-sender` 只在能拿到 sender 且 `chat_type=group` 时生效；私聊不会 @
+   - 需要人工指定目标时可传 `--chat "{chat_id}"`
+   - 发送脚本返回 `status: "sent"` → 不再输出重复纯文本结论
+   - 发送脚本非 0、`status: "unresolved"` 或 `status: "ambiguous"` → 当前会话输出飞书兼容纯文本结论，并说明卡片失败原因
+   - 如果环境变量 chat_id 与精确反查 chat_id 不一致，发送脚本仍使用精确反查结果，并在状态中记录 `env_chat_conflict`
+   - 最近 15 分钟窗口外的历史相同问题不算多命中；窗口内群聊/私聊合计多条相同 query 才算来源歧义
+   - 如果最终结论已经以普通文本输出，但本轮没有 `send_feishu_card.py` 调用记录，视为违反本技能输出规则
 
 ## 意图分类
 
@@ -179,7 +257,7 @@ disable: false
 3. **判断是否为统计模式（见"数据统计强制约束"）。是 → `cls_query.py --method auto --require-complete`；API 完整才可统计。**
 4. 非统计模式默认 `cls_query.py --method auto`。API 不可用或结果不完整时，用返回的 `cls_url` 交给 WorkBuddy 内置浏览器；必要时再显式切换本地 Chrome 备用路径。
 5. 0 命中时按"无结果排查清单"回退。
-6. 分析日志 → 直接在当前会话输出飞书兼容文本结论。仅使用本地 Chrome 备用窗口时，最后调用 `cls_query.py --close` 关窗口。
+6. 分析日志 → 执行「来源识别与飞书卡片发送」→ 优先发送飞书卡片。发送失败、来源缺失或歧义时 fallback 为当前会话纯文本。仅使用本地 Chrome 备用窗口时，最后调用 `cls_query.py --close` 关窗口。
 
 ## CLS 工具
 
@@ -284,9 +362,9 @@ URL: `https://datasight-1300455117.internal.clsconsole.tencent-cloud.com/cls/sea
 | **env** | 非索引 | 默认 `prod`；测试环境未指定具体 test 编号时不加此条件 |
 | **message** | 全文 | orderId、cid、contractNo 等非索引字段通过 message 搜索 |
 
-## 飞书兼容文本结论
+## 飞书卡片结论与纯文本 fallback
 
-最终结论使用字段化文本，避免表格、代码块、复杂嵌套列表和卡片语法。推荐结构：
+最终结论优先使用飞书卡片。只有卡片发送失败、来源缺失或歧义时，才使用字段化纯文本 fallback，避免表格、代码块、复杂嵌套列表和卡片语法。fallback 推荐结构：
 
 结论: 一句话说明结果、根因或当前健康状态。
 查询范围: 环境、时间范围、topic、CLS 查询语句。

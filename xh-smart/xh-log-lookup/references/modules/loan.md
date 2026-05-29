@@ -53,4 +53,4 @@ order, loki, underwriter, frontendcenter, account-gateway
 
 ## 提前结清历史飞书卡片模板
 
-提前结清失败的历史飞书卡片模板见：`references/modules/loan/early-settle-card-template.md`。当前主流程使用飞书兼容文本结论，该模板只作手工排查或恢复卡片能力时参考。
+提前结清失败的飞书卡片模板见：`references/modules/loan/early-settle-card-template.md`。当前主流程优先发送飞书卡片，发送失败、来源缺失或来源歧义时降级为飞书兼容文本结论。

@@ -87,7 +87,7 @@ Step 3: 构造 CLS 查询 → 优先用 WorkBuddy 内置浏览器打开生产 to
 Step 4: 提取页面文本结果
 Step 5: 去重汇总 → 统计 unique contractNo、orderStatus、剩余本金等
 Step 6: 说明限制 — 仅30天有活动的合同
-Step 7: 输出飞书兼容文本结论
+Step 7: 按主控规则优先输出飞书卡片；卡片失败时输出飞书兼容文本结论
 ```
 
 ## 实操样例

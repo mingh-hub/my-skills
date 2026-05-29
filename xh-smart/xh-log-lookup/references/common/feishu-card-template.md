@@ -1,4 +1,4 @@
-# 飞书卡片模板（历史参考）
+# 飞书卡片模板
 
 ## 目录
 
@@ -11,9 +11,9 @@
 
 ## 何时读取
 
-当前 `xh-log-lookup` 主流程不再发送飞书卡片，默认直接输出飞书兼容文本结论。只有需要手工构造或排查历史 `scripts/send_feishu_card.py` 卡片内容时才读取本文；需要 CLS 链接时，可用 `cls_query.py` 输出的 `cls_url` / `expanded_url`。
+当前 `xh-log-lookup` 主流程优先通过 `scripts/send_feishu_card.py` 发送飞书卡片，发送失败、来源缺失或来源歧义时才降级为飞书兼容文本结论。需要 CLS 链接时，可用 `cls_query.py` 输出的 `cls_url` / `expanded_url`。
 
-主流程见 `../SKILL.md`。本文只作为历史卡片模板参考，不再是默认输出规范。
+主流程见 `../SKILL.md`。本文作为卡片内容组织和历史模板参考。
 
 ## 1. 适用范围
 
