@@ -197,7 +197,6 @@ def _search_messages(query, start, chat_type, at_bot=False):
         f"--start '{start}'",
         "--page-limit 1",
         "--page-size 5",
-        "--format json",
     ])
     if at_bot:
         parts.append(f"--at-chatter-ids '{BOT_OPEN_ID}'")
@@ -236,10 +235,11 @@ def resolve_chat(query, window_minutes=15):
                          ensure_ascii=False), file=sys.stderr)
         return {}
 
-    start = _recent_start(window_minutes)
+    start_15 = _recent_start(15)
+    start_120 = _recent_start(120)
     searches = [
-        ("group_at_bot", _search_messages(query=query, start=start, chat_type="group", at_bot=True)),
-        ("p2p", _search_messages(query=query, start=start, chat_type="p2p", at_bot=False)),
+        ("group_at_bot", _search_messages(query=query, start=start_120, chat_type="group", at_bot=True)),
+        ("p2p", _search_messages(query=query, start=start_15, chat_type="p2p", at_bot=False)),
     ]
     candidates = []
     seen_ids = set()
@@ -269,12 +269,13 @@ def resolve_chat(query, window_minutes=15):
                              ensure_ascii=False), file=sys.stderr)
             return {}
         matched_count += source_count
-        strategies.append(f"exact_query_{source}_{window_minutes}m")
+        source_window = 120 if source == "group_at_bot" else 15
+        strategies.append(f"exact_query_{source}_{source_window}m")
         if source_count > 1:
             return {
                 "ambiguous": True,
                 "matched_count": source_count,
-                "search_strategy": f"exact_query_{source}_{window_minutes}m",
+                "search_strategy": f"exact_query_{source}_{source_window}m",
             }
         msg_id = message_ids[0]
         if msg_id not in seen_ids:
@@ -289,17 +290,22 @@ def resolve_chat(query, window_minutes=15):
         }
 
     if len(candidates) > 1:
-        return {
-            "ambiguous": True,
-            "matched_count": matched_count,
-            "search_strategy": f"exact_query_mixed_{window_minutes}m",
-        }
+        # group_at_bot 优先于 p2p（群聊场景优先级更高）
+        group_candidate = next((c for c in candidates if c[1] == "group_at_bot"), None)
+        if group_candidate:
+            candidates = [group_candidate]
+        else:
+            return {
+                "ambiguous": True,
+                "matched_count": matched_count,
+                "search_strategy": f"exact_query_mixed_{window_minutes}m",
+            }
 
     msg_id, source = candidates[0]
     expected_chat_type = "group" if source == "group_at_bot" else "p2p"
-    search_strategy = strategies[0] if len(strategies) == 1 else f"exact_query_{source}_{window_minutes}m"
+    search_strategy = strategies[0] if len(strategies) == 1 else f"exact_query_{source}_{120 if source == 'group_at_bot' else 15}m"
 
-    cmd = f"lark-cli im +messages-mget --message-ids '{msg_id}' --as bot --format json"
+    cmd = f"lark-cli im +messages-mget --message-ids '{msg_id}' --as bot"
     detail_result = _lark_run(cmd)
 
     detail_data = _load_json_output(detail_result.stdout, detail_result.stderr, "resolve_chat.mget")
@@ -322,16 +328,10 @@ def resolve_chat(query, window_minutes=15):
     msg = msgs[0]
     sender = msg.get("sender", {})
     chat_type = msg.get("chat_type") or msg.get("chat_type_v2") or ""
-    if chat_type != expected_chat_type:
-        return {
-            "unresolved": True,
-            "error": "chat_type_mismatch",
-            "matched_msg_id": msg_id,
-            "matched_count": matched_count,
-            "resolved_chat_type": chat_type,
-            "expected_chat_type": expected_chat_type,
-            "search_strategy": search_strategy,
-        }
+    if not chat_type:
+        chat_type = expected_chat_type
+    elif chat_type not in ("group", "p2p"):
+        chat_type = expected_chat_type
 
     return {
         "chat_id": msg.get("chat_id", ""),
@@ -624,7 +624,11 @@ def main():
         data.setdefault("call_chain", parsed["call_chain"])
         data.setdefault("log_count", parsed["log_count"])
 
-    if args.at_sender and sender_info:
+    # 群聊自动 @：当 --resolve-chat 解析到 group 且有 sender_info 时自动生效
+    should_at = args.at_sender or (
+        sender_info and sender_info.get("chat_type") == "group" and sender_info.get("sender_open_id")
+    )
+    if should_at and sender_info:
         card = build_card(args.title, args.color, args.cls_url, args.cls_url_expanded,
                           data,
                           sender_open_id=sender_info.get("sender_open_id", ""),
