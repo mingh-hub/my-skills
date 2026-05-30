@@ -1,25 +1,24 @@
 # my-skills
 
-Hermes AI agent 技能集合，用于生产/测试环境日志查询、业务异常排查和内部 SSO 会话管理。
+WorkBuddy / Hermes AI agent 技能集合，用于生产/测试环境日志查询、业务异常排查、飞书卡片输出和内部 SSO 会话管理。
 
 ## 项目结构
 
 ```text
 my-skills/
   xh-smart/
-    xh-log-lookup/              # 日志查询主控
-      SKILL.md
-      agents/openai.yaml
+    xh-log-lookup/              # 日志查询主控 skill
+      SKILL.md                  # 主控规则、服务映射、业务路由和输出约束
       scripts/                  # Python CLI 工具
-        cls_query.py
-        validate_query_anchors.py
-      references/               # 查询规则、踩坑记录等参考文档
-      xh-log-lookup-order/      # 订单模块子技能
-      xh-log-lookup-sign/       # 签约模块子技能
-      xh-log-lookup-benefit/    # 权益模块子技能
-      xh-log-lookup-loan/       # 放款模块子技能
-      xh-log-lookup-repay/      # 还款模块子技能
-    xh-sso-access/              # SSO 会话管理
+        cls_query.py            # CLS API / WorkBuddy URL / 本地 Chrome 备用查询
+        send_feishu_card.py     # 飞书卡片发送、来源反查、群聊自动 @
+        resolve_workspace.py    # 按项目名自动定位本地源码仓库
+        validate_query_anchors.py # 校验 reference 中的查询锚点
+        skill_config.py         # 内部共享解析工具
+      references/
+        modules/                # 订单、签约、权益、放款、还款模块 reference
+        common/                 # CLS、飞书卡片、Chrome 备用路径等通用 reference
+    xh-sso-access/              # SSO 会话管理 skill
       SKILL.md
       agents/openai.yaml
       tools/
@@ -31,34 +30,51 @@ my-skills/
 
 ## 技能清单
 
-| 技能 | 路径 | 版本 | 说明 |
-| ---- | ---- | ---- | ---- |
-| xh-log-lookup | `xh-smart/xh-log-lookup/` | 2.0.2 | 日志查询主控，负责意图分类、业务路由、CLS 查询和飞书卡片优先输出，发送失败时降级为飞书兼容文本 |
-| xh-log-lookup-order | `xh-smart/xh-log-lookup/xh-log-lookup-order/` | 2.1.0 | 订单模块 — 下单、借款、续签、拦截、反欺诈 |
-| xh-log-lookup-sign | `xh-smart/xh-log-lookup/xh-log-lookup-sign/` | 1.0.0 | 签约模块 — 签约、重签、绑卡、代扣协议 |
-| xh-log-lookup-benefit | `xh-smart/xh-log-lookup/xh-log-lookup-benefit/` | 1.1.0 | 权益模块 — 会员、优惠券、乐活卡 |
-| xh-log-lookup-loan | `xh-smart/xh-log-lookup/xh-log-lookup-loan/` | 1.0.0 | 放款模块 — 资金路由、放款推送、解H |
-| xh-log-lookup-repay | `xh-smart/xh-log-lookup/xh-log-lookup-repay/` | 1.1.0 | 还款模块 — 还款、扣款、聚合支付、好友代付 |
-| xh-sso-access | `xh-smart/xh-sso-access/` | 2.0.0 | SSO 会话管理 — Argus/JANUS/PMP 登录态维护 |
+| 技能 | 路径 | 说明 |
+| ---- | ---- | ---- |
+| xh-log-lookup | `xh-smart/xh-log-lookup/` | 日志查询主控，负责意图分类、业务路由、CLS 查询、统计分档、飞书卡片优先输出和纯文本 fallback |
+| xh-sso-access | `xh-smart/xh-sso-access/` | SSO 会话管理，处理 Argus/JANUS/PMP 等内部系统登录态、Cookie 和本地 Chrome 会话 |
 
-`xh-log-lookup/SKILL.md` 中的 `serviceName` 映射表同时也是客户订单组的服务范围清单。`serviceName` 是 CLS 查询字段，`别名` 是自然语言服务范围入口，`项目名`仅用于定位源码仓库；`别名`列可以写多个值，用逗号分隔，多个 `serviceName` 也可以共用同一个别名集合，例如 `订单服务,订单`。
+`xh-log-lookup` 的业务模块不再拆成独立子技能，而是放在 `references/modules/` 下：
+
+| 模块 reference | 覆盖场景 |
+| ---- | ---- |
+| `references/modules/order.md` | 下单、借款、预检、试算、拦截、反欺诈 |
+| `references/modules/sign.md` | 签约、重签、协议、绑卡、代扣协议 |
+| `references/modules/benefit.md` | 权益、会员、VIP、优惠券、乐活卡 |
+| `references/modules/loan.md` | 放款、资金路由、loki、提前结清 |
+| `references/modules/repay.md` | 还款、扣款、结清、逾期、聚合支付 |
+
+`xh-log-lookup/SKILL.md` 中的 `serviceName` 映射表同时也是客户订单组的服务范围清单。`serviceName` 是 CLS 查询字段，`别名` 是自然语言服务范围入口，`项目名` 仅用于定位源码仓库；`别名`列可以写多个值，用逗号分隔，多个 `serviceName` 也可以共用同一个别名集合，例如 `订单服务,订单`。
+
+## xh-log-lookup 当前行为
+
+- **触发前提**：处理私聊 Tom，或群聊中明确 `@Tom` / 已被 WorkBuddy/Claw 判定为对 Tom 的直接提及。
+- **默认环境**：用户未指定环境时查生产环境；只有明确说测试环境时才查测试 topic。
+- **服务范围**：按“具体 `serviceName` → 表中别名对应服务组 → 客户订单组全表服务”识别。
+- **统计模式**：先用 `cls_query.py --method auto --api-limit 500` 探测；`<=500` 默认精确，`500-1000` 按用户意图选择精确或采样，`>1000` 默认采样；采样统计必须写明“采样统计，非精确统计”。
+- **来源反查**：飞书卡片默认用用户原始问题 + 最近 15 分钟窗口反查群聊 @Tom 或私聊 p2p 来源；当前脚本在群聊和私聊各命中 1 条时优先群聊。
+- **输出规则**：最终结论优先通过 `send_feishu_card.py` 发送飞书卡片；卡片发送失败、来源缺失或来源歧义时，才降级为当前会话纯文本 fallback。
+- **废弃路径**：不再维护 Argus iframe 穿透方案；直接打开完整 CLS URL，WorkBuddy 优先，本地 Chrome 是备用路径。
 
 ## 工具
 
 | 工具 | 路径 | 说明 |
 | ---- | ---- | ---- |
-| cls_query.py | `xh-smart/xh-log-lookup/scripts/` | 优先通过 CLS HTTP API 查询日志；API 不可用或结果不完整时输出 WorkBuddy fallback URL，显式选择时才用本地 Chrome/AppleScript |
-| validate_query_anchors.py | `xh-smart/xh-log-lookup/scripts/` | 校验 SKILL.md 中推荐查询的代码锚点是否与源码匹配 |
-| argus_session.py | `xh-smart/xh-sso-access/tools/` | 管理本地 Chrome Argus 会话窗口（创建/复用/校验 cookie/提取 cookie） |
-| test_encrypt.py | `xh-smart/xh-sso-access/tools/` | PMP SSO RSA 加密实验脚本（需要 `cryptography` 包） |
+| `cls_query.py` | `xh-smart/xh-log-lookup/scripts/` | 优先通过 CLS HTTP API 查询日志；默认 `--api-limit 500`，用于统计探测和小数据精确统计；必要时输出 WorkBuddy fallback URL，显式选择时才用本地 Chrome/AppleScript |
+| `send_feishu_card.py` | `xh-smart/xh-log-lookup/scripts/` | 发送飞书交互式卡片；支持 `--resolve-chat --query` 来源反查、最近 15 分钟窗口、群聊 sender 自动 @ 和纯文本 fallback 状态返回 |
+| `resolve_workspace.py` | `xh-smart/xh-log-lookup/scripts/` | 按 `XH_WORKSPACE_ROOTS` 和项目名自动定位本地源码仓库，并可更新 `SKILL.md` 服务映射表中的本地路径 |
+| `validate_query_anchors.py` | `xh-smart/xh-log-lookup/scripts/` | 校验业务 reference 中推荐查询的代码锚点是否仍与源码匹配 |
+| `skill_config.py` | `xh-smart/xh-log-lookup/scripts/` | 内部共享解析工具，供其它脚本读取/渲染 `SKILL.md` 服务映射表 |
+| `argus_session.py` | `xh-smart/xh-sso-access/tools/` | 管理本地 Chrome Argus 会话窗口（创建/复用/校验 cookie/提取 cookie） |
+| `test_encrypt.py` | `xh-smart/xh-sso-access/tools/` | PMP SSO RSA 加密实验脚本（需要 `cryptography` 包） |
 
 ## 环境要求
 
-- **macOS** — 仅本地浏览器兜底路径需要 AppleScript 驱动 Google Chrome
-- **Python 3.9+** — 主要工具仅依赖标准库，无需 pip install
-- **Google Chrome** — 仅 WorkBuddy 不可用、需要本地 Chrome 兜底访问和日志提取时需要
-- **WorkBuddy/飞书运行环境** — `xh-log-lookup` 优先通过 `send_feishu_card.py` + `lark-cli` 发送飞书卡片；运行侧可提供当前会话 ID（如 `FEISHU_CURRENT_CHAT_ID` / `AGENT_CURRENT_CHAT_ID`），缺失时用用户原始问题 + 最近时间窗精确反查群聊 @Tom 或私聊 p2p 来源，失败或来源不唯一时降级为当前会话文本回复
-- 可选：`cryptography` Python 包（仅 `test_encrypt.py` 需要）
+- **Python 3.9+** — `xh-log-lookup` 主要工具仅依赖标准库。
+- **WorkBuddy/飞书运行环境** — `xh-log-lookup` 通过 `send_feishu_card.py` + `lark-cli` 发送飞书卡片；来源缺失或来源歧义时降级为当前会话文本回复。
+- **macOS + Google Chrome** — 仅 WorkBuddy 不可用、页面操作失败或需要本地 Chrome 备用提取时需要。
+- 可选：`cryptography` Python 包，仅 `xh-sso-access/tools/test_encrypt.py` 需要。
 
 ## 仓库路径自动定位
 
@@ -79,11 +95,11 @@ python3 xh-smart/xh-log-lookup/scripts/resolve_workspace.py --check
 bash .claude/skills/run-my-skills/smoke.sh
 ```
 
-自动发现并验证所有 Python 工具和 agent 定义文件：
+Smoke 测试会验证现有 Python 工具和 agent 定义：
 
-- 对每个 `*/tools/*.py` 执行 `--help` 检查（缺依赖标记 SKIP）
+- 对 `*/tools/*.py` 执行 `--help` 检查（缺依赖标记 SKIP）
 - 对 `cls_query.py` 执行 `--method workbuddy --no-browser` URL 构建验证
 - 对含锚点表的 `SKILL.md` 执行 `validate_query_anchors.py` 校验
-- 对每个 `*/agents/*.yaml` 执行格式校验
+- 对现有 `*/agents/*.yaml` 执行格式校验（当前主要是 `xh-sso-access/agents/openai.yaml`）
 
-新增技能后无需修改脚本，工具和定义文件会被自动扫描。
+新增工具或 reference 后无需修改脚本，测试会按现有目录自动扫描。

@@ -101,7 +101,7 @@ disable: false
 ### 查询方法
 - **查询前置条件（强制）**：
   - **用户提供了 traceId**：可以直接到日志平台用 `traceId:"{value}"` 查询
-  - **用户未提供 traceId**：**必须先分析本地业务代码**，理解业务流程和日志打印逻辑后，再构造查询到日志平台查询。禁止以任何理由（包括路径不匹配、嫌麻烦等）跳过本地业务分析
+  - **用户未提供 traceId**：单笔根因分析、业务入口不明确、推荐锚点不可用时，必须先分析本地业务代码，理解业务流程和日志打印逻辑后再构造查询。统计/健康检查可先按模块 reference 和服务范围查询，再按需要做锚点校验
 - **环境默认规则**：用户未指定环境时，**必须查生产环境（prod）**。只有用户明确说"查测试环境"时才使用测试 topic。禁止自行假设或优先查测试环境。
 - **traceId 查询与提取**：
   - **用户提供 traceId**：直接执行 `traceId:"{value}"`（不加 `serviceName`）；查不到时扩大时间：`now-1d,now` → `now-7d,now` → `now-30d,now`
@@ -124,7 +124,7 @@ disable: false
 - `方法入口` 存在且 `serviceName` 与源码项目匹配、固定 `message:\"...\"` 片段仍在该入口类/方法附近命中时，才把推荐查询作为 Phase A 主查询。
 - 方法存在但固定 message 不匹配时，不要把旧模板当主路径；改用 `serviceName:\"{服务}\" AND message:\"{标识符}\"`，并 grep 当前代码找新日志前缀。
 - 方法不存在、源码缺失或服务不匹配时，标记模板疑似过期；先按 traceId/标识符值搜，再回代码确认入口。
-- 推荐查询 0 命中时，继续扩大时间做值搜，如果能搜到日志，说明`sql`没问题，在目标查询时间段没有命中；当扩大到当前时间前一个月还没日志信息时，停止搜索，去本地项目内
+- 推荐查询 0 命中时，继续扩大时间做值搜；如果能搜到日志，说明查询语法可用但目标时间段无命中；扩大到当前时间前一个月仍无日志时，停止扩大时间，回本地项目确认日志是否已下线、模板是否过期或入口是否变更。
  
 ### 日志查询无结果排查清单
 
@@ -138,7 +138,7 @@ disable: false
 ### API、内置浏览器和本地浏览器优先级
 
 - 优先用 `scripts/cls_query.py --method auto`。默认先请求 CLS 内部 HTTP API，不需要浏览器、不需要 `secret_id/secret_key`，查询中可直接包含中文。
-- API 返回 `source=api_failed` 或 `is_complete=false` 时，使用输出中的 `cls_url` 交给 WorkBuddy 内置浏览器打开。URL 必须包含 `topic_id`、`time`、`queryBase64`，避免依赖页面默认状态。
+- API 返回 `source=api_failed` 或 `is_complete=false` 时，按统计分档规则或非统计完整性风险决定下一步；需要页面 fallback 时，使用输出中的 `cls_url` 交给 WorkBuddy 内置浏览器打开。URL 必须包含 `topic_id`、`time`、`queryBase64`，避免依赖页面默认状态。
 - 本地 Chrome + AppleScript 是最后备用路径：当 WorkBuddy 登录态不可用、页面操作失败、需要脚本自动加载更多或批量全文提取时，显式使用 `scripts/cls_query.py --method local-chrome --use-local-chrome`。
 - 使用本地 Chrome 备用路径时，禁止默认操作 `active tab of front window`。首次查询创建新的 Chrome window，后续查询复用该窗口，通过 window id 定向操作；调查结束后调用 `scripts/cls_query.py --close` 关闭窗口。
 - 不要用 `document.body.innerText.substring(0,N)` 判断结果；CLS 日志数据在页面文本后部。
@@ -166,47 +166,16 @@ disable: false
 
 2. **来源优先级**：`--chat` 是人工显式指定目标，优先级最高。WorkBuddy 正常路径必须使用 `--resolve-chat --query "{用户原始问题}"`，并以精确反查得到的唯一 `chat_id` 作为发送目标。`FEISHU_CURRENT_CHAT_ID` / `AGENT_CURRENT_CHAT_ID` 等环境变量只作为未传 `--resolve-chat` 时的兼容路径，不能覆盖或短路精确反查结果。
 
-3. **反查来源**：`--resolve-chat` 必须用用户原始问题文本精确搜索最近时间窗内的群聊 @Bot 消息和私聊 p2p 消息。`{用户原始问题}` 使用触发 Tom 的原始问题正文；群聊去掉 `@Tom` 和首尾空白，私聊直接使用用户输入正文；不要改写、总结或替换成分析后的标题。
+3. **反查来源**：`--resolve-chat` 使用 `send_feishu_card.py` 的当前实现为准：用用户原始问题精确搜索最近 15 分钟内的群聊 @Bot 消息和私聊 p2p 消息。群聊 query 去掉 `@Tom` 和首尾空白，私聊直接使用用户输入正文；不要改写、总结或替换成分析标题。
 
-   群聊来源搜索：
-   ```bash
-   LARK_CLI_NO_PROXY=1 lark-cli im +messages-search \
-     --as user \
-     --query "{用户问题文本}" \
-     --chat-type group \
-     --sender-type user \
-     --at-chatter-ids "ou_ae0341a3578d833a22b5f2927b103988" \
-     --start "{当前时间 - 15 分钟}" \
-     --page-limit 1 \
-     --format json
-   ```
+4. **当前脚本行为**：
+   - 单一来源命中 0 条 → 搜不到来源，fallback 为当前会话纯文本。
+   - 单一来源命中多条 → 来源歧义，fallback 为当前会话纯文本。
+   - 群聊和私聊各命中 1 条 → 当前脚本优先群聊来源。
+   - `messages-mget` 返回的 `chat_type` 缺失或异常时，当前脚本按搜索分支兜底为 `group` 或 `p2p`。
+   - 群聊解析到 sender 时会自动 @ 提问者；显式 `--at-sender` 仍可传入，但不是唯一 @ 条件。
 
-   私聊来源搜索：
-   ```bash
-   LARK_CLI_NO_PROXY=1 lark-cli im +messages-search \
-     --as user \
-     --query "{用户问题文本}" \
-     --chat-type p2p \
-     --sender-type user \
-     --start "{当前时间 - 15 分钟}" \
-     --page-limit 1 \
-     --format json
-   ```
-
-4. **获取详情**：用 Bot 身份获取消息详情（含 chat_id、sender）。
-   ```bash
-   LARK_CLI_NO_PROXY=1 lark-cli im +messages-mget \
-     --message-ids "{message_id}" \
-     --as bot
-   ```
-
-5. **解析结果**：提取 `chat_id`、`chat_type`、`sender.open_id`。
-   - 群聊和私聊合并后命中 0 条 → 搜不到来源，fallback 为当前会话纯文本
-   - 群聊和私聊合并后命中 1 条，且 `messages-mget` 返回的 `chat_type` 与搜索分支一致 → 唯一匹配，发卡片到该 chat_id
-   - 群聊和私聊合并后命中 ≥2 条 → 来源不唯一，不发卡片，fallback 当前会话纯文本，并说明最近 15 分钟窗口内同 query 多命中
-   - 搜索分支与 `messages-mget` 的 `chat_type` 不一致 → 来源异常，不发卡片，fallback 当前会话纯文本
-
-6. **发送卡片**：
+5. **发送卡片**：
    ```bash
    python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py \
      --resolve-chat --query "{用户原始问题}" \
@@ -215,12 +184,11 @@ disable: false
      --title "..." --color "..." --data "..."
    ```
    - 正常路径必须保留 `--resolve-chat --query`；只要传入 `--resolve-chat`，脚本就必须使用原始问题 + 时间窗精确反查群聊和私聊来源，环境变量不得短路发送目标
-   - `--at-sender` 只在能拿到 sender 且 `chat_type=group` 时生效；私聊不会 @
    - 需要人工指定目标时可传 `--chat "{chat_id}"`
    - 发送脚本返回 `status: "sent"` → 不再输出重复纯文本结论
    - 发送脚本非 0、`status: "unresolved"` 或 `status: "ambiguous"` → 当前会话输出飞书兼容纯文本结论，并说明卡片失败原因
    - 如果环境变量 chat_id 与精确反查 chat_id 不一致，发送脚本仍使用精确反查结果，并在状态中记录 `env_chat_conflict`
-   - 最近 15 分钟窗口外的历史相同问题不算多命中；窗口内群聊/私聊合计多条相同 query 才算来源歧义
+   - 最近 15 分钟窗口外的历史相同问题不算多命中；窗口内单一来源多条相同 query 才算来源歧义
    - 如果最终结论已经以普通文本输出，但本轮没有 `send_feishu_card.py` 调用记录，视为违反本技能输出规则
 
 ## 意图分类
@@ -375,6 +343,11 @@ URL: `https://datasight-1300455117.internal.clsconsole.tencent-cloud.com/cls/sea
 
 ## References
 
+- 订单/下单/预检/试算问题：读 `references/modules/order.md`
+- 签约/重签/协议/绑卡问题：读 `references/modules/sign.md`
+- 权益/VIP/优惠券/乐活卡问题：读 `references/modules/benefit.md`
+- 放款/资金路由/loki/提前结清问题：读 `references/modules/loan.md`
+- 还款/扣款/结清/逾期问题：读 `references/modules/repay.md`
 - `references/common/update-master-branch.md`：更新本地 `master` 分支代码
 - `references/common/cls-local-chrome-access.md`：备用：本地 Chrome 专用窗口访问 CLS
 - `references/common/cls-dom-extraction.md`：全文提取、加载更多、CK/CS 合同号解析
@@ -385,4 +358,3 @@ URL: `https://datasight-1300455117.internal.clsconsole.tencent-cloud.com/cls/sea
 - `references/common/trace-dubbo-profile-filter.md`：Dubbo 全链路追踪（ProfileFilter CS/CR/SS/SR 标记解读 + 溯源方法论）
 - `references/common/cls-topic-field-reference.md`：CLS Topic 字段对照表（生产/测试环境 topic 属性与索引字段）
 - `references/common/efficient-query-pattern-20260517.md`：高效查询工作流（查询耗时优化、CLS 页面异常处理）
-- `references/common/cls-iframe-crossorigin-workflow.md`：历史废弃 iframe 方案，只作背景
