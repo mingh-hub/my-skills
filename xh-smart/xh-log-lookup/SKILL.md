@@ -164,14 +164,13 @@ disable: false
 
 1. **必须先调用发送脚本**：最终结论生成后，先执行 `send_feishu_card.py`。不要先输出普通文本结论；只有发送脚本返回非 0 或明确失败状态时，才输出纯文本 fallback。
 
-2. **来源优先级**：`--chat` 是人工显式指定目标，优先级最高。WorkBuddy 正常路径必须使用 `--resolve-chat --query "{用户原始问题}"`，并以精确反查得到的唯一 `chat_id` 作为发送目标。`FEISHU_CURRENT_CHAT_ID` / `AGENT_CURRENT_CHAT_ID` 等环境变量只作为未传 `--resolve-chat` 时的兼容路径，不能覆盖或短路精确反查结果。
+2. **来源优先级**：`--chat` 是人工显式指定目标，优先级最高。WorkBuddy 正常路径必须使用 `--resolve-chat --query "{用户原始问题}"`，并以来源反查选定的 `chat_id` 作为发送目标。`FEISHU_CURRENT_CHAT_ID` / `AGENT_CURRENT_CHAT_ID` 等环境变量只作为未传 `--resolve-chat` 时的兼容路径，不能覆盖或短路反查结果。
 
 3. **反查来源**：`--resolve-chat` 使用 `send_feishu_card.py` 的当前实现为准：用用户原始问题精确搜索最近 15 分钟内的群聊 @Bot 消息和私聊 p2p 消息。群聊 query 去掉 `@Tom` 和首尾空白，私聊直接使用用户输入正文；不要改写、总结或替换成分析标题。
 
 4. **当前脚本行为**：
    - 单一来源命中 0 条 → 搜不到来源，fallback 为当前会话纯文本。
-   - 单一来源命中多条 → 来源歧义，fallback 为当前会话纯文本。
-   - 群聊和私聊各命中 1 条 → 当前脚本优先群聊来源。
+   - 单一来源或跨来源多命中 → 以 `create_time` 最新的一条作为发送目标。
    - `messages-mget` 返回的 `chat_type` 缺失或异常时，当前脚本按搜索分支兜底为 `group` 或 `p2p`。
    - 群聊解析到 sender 时会自动 @ 提问者；显式 `--at-sender` 仍可传入，但不是唯一 @ 条件。
 
@@ -183,12 +182,12 @@ disable: false
      --at-sender \
      --title "..." --color "..." --data "..."
    ```
-   - 正常路径必须保留 `--resolve-chat --query`；只要传入 `--resolve-chat`，脚本就必须使用原始问题 + 时间窗精确反查群聊和私聊来源，环境变量不得短路发送目标
+   - 正常路径必须保留 `--resolve-chat --query`；只要传入 `--resolve-chat`，脚本就必须使用原始问题 + 时间窗反查群聊和私聊来源，并在多命中时选择最新消息，环境变量不得短路发送目标
    - 需要人工指定目标时可传 `--chat "{chat_id}"`
    - 发送脚本返回 `status: "sent"` → 不再输出重复纯文本结论
-   - 发送脚本非 0、`status: "unresolved"` 或 `status: "ambiguous"` → 当前会话输出飞书兼容纯文本结论，并说明卡片失败原因
-   - 如果环境变量 chat_id 与精确反查 chat_id 不一致，发送脚本仍使用精确反查结果，并在状态中记录 `env_chat_conflict`
-   - 最近 15 分钟窗口外的历史相同问题不算多命中；窗口内单一来源多条相同 query 才算来源歧义
+   - 发送脚本非 0 或 `status: "unresolved"` → 当前会话输出飞书兼容纯文本结论，并说明卡片失败原因
+   - 如果环境变量 chat_id 与反查选定的 chat_id 不一致，发送脚本仍使用反查结果，并在状态中记录 `env_chat_conflict`
+   - 最近 15 分钟窗口外的历史相同问题不算多命中；窗口内相同 query 以 `create_time` 最新消息为准
    - 如果最终结论已经以普通文本输出，但本轮没有 `send_feishu_card.py` 调用记录，视为违反本技能输出规则
 
 ## 意图分类

@@ -216,6 +216,40 @@ def _extract_message_ids(search_payload):
     return message_ids
 
 
+def _fetch_message_detail(msg_id):
+    cmd = f"lark-cli im +messages-mget --message-ids '{msg_id}' --as bot"
+    detail_result = _lark_run(cmd)
+
+    detail_data = _load_json_output(detail_result.stdout, detail_result.stderr, "resolve_chat.mget")
+    if detail_data is None:
+        return None, "mget parse failed"
+
+    if not detail_data.get("ok"):
+        return None, detail_data.get("error", "mget failed")
+
+    msgs = detail_data.get("data", {}).get("messages", [])
+    if not msgs:
+        return None, "mget returned no messages"
+
+    return msgs[0], ""
+
+
+def _message_time_value(msg):
+    """Return a comparable millisecond timestamp and the source field name."""
+    for key in ("create_time", "update_time", "timestamp"):
+        raw_value = msg.get(key)
+        if raw_value is None or raw_value == "":
+            continue
+        try:
+            value = int(str(raw_value))
+        except (TypeError, ValueError):
+            continue
+        if value < 10_000_000_000:
+            value *= 1000
+        return value, key
+    return None, ""
+
+
 def _recent_start(minutes):
     tz = timezone(timedelta(hours=8))
     return (datetime.now(tz) - timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%S+08:00")
@@ -226,7 +260,7 @@ def resolve_chat(query, window_minutes=15):
 
     Returns:
         dict with chat_id, chat_type, sender_open_id, sender_name,
-             matched_count, ambiguous, matched_msg_id
+             matched_count, matched_msg_id
         或 {} 表示未找到
     """
     query = (query or "").strip()
@@ -235,15 +269,13 @@ def resolve_chat(query, window_minutes=15):
                          ensure_ascii=False), file=sys.stderr)
         return {}
 
-    start_15 = _recent_start(15)
+    start = _recent_start(window_minutes)
     searches = [
-        ("group_at_bot", _search_messages(query=query, start=start_15, chat_type="group", at_bot=True)),
-        ("p2p", _search_messages(query=query, start=start_15, chat_type="p2p", at_bot=False)),
+        ("group_at_bot", _search_messages(query=query, start=start, chat_type="group", at_bot=True)),
+        ("p2p", _search_messages(query=query, start=start, chat_type="p2p", at_bot=False)),
     ]
     candidates = []
     seen_ids = set()
-    matched_count = 0
-    strategies = []
 
     for source, search_data in searches:
         if search_data is None:
@@ -267,64 +299,64 @@ def resolve_chat(query, window_minutes=15):
             print(json.dumps({"status": "error", "detail": f"{source} search returned count without message_ids"},
                              ensure_ascii=False), file=sys.stderr)
             return {}
-        matched_count += source_count
-        source_window = 15
-        strategies.append(f"exact_query_{source}_{source_window}m")
-        if source_count > 1:
-            return {
-                "ambiguous": True,
-                "matched_count": source_count,
-                "search_strategy": f"exact_query_{source}_{source_window}m",
-            }
-        msg_id = message_ids[0]
-        if msg_id not in seen_ids:
-            seen_ids.add(msg_id)
-            candidates.append((msg_id, source))
+        for msg_id in message_ids:
+            if msg_id not in seen_ids:
+                seen_ids.add(msg_id)
+                candidates.append({
+                    "msg_id": msg_id,
+                    "source": source,
+                    "search_order": len(candidates),
+                })
 
     if not candidates:
         return {
             "unresolved": True,
             "matched_count": 0,
-            "search_strategy": f"exact_query_mixed_{window_minutes}m",
+            "search_strategy": f"latest_query_mixed_{window_minutes}m",
+        }
+    matched_count = len(candidates)
+
+    detailed_candidates = []
+    detail_errors = []
+    for candidate in candidates:
+        msg, error_detail = _fetch_message_detail(candidate["msg_id"])
+        if msg is None:
+            detail_errors.append({
+                "msg_id": candidate["msg_id"],
+                "source": candidate["source"],
+                "error": error_detail,
+            })
+            continue
+
+        time_value, time_field = _message_time_value(msg)
+        candidate.update({
+            "msg": msg,
+            "time_value": time_value,
+            "time_field": time_field,
+        })
+        detailed_candidates.append(candidate)
+
+    if not detailed_candidates:
+        sys.stderr.write(f"[resolve_chat] mget error: {json.dumps(detail_errors[:3], ensure_ascii=False)[:500]}\n")
+        return {
+            "unresolved": True,
+            "error": "detail_fetch_failed",
+            "matched_count": matched_count,
+            "search_strategy": f"latest_query_mixed_{window_minutes}m",
+            "detail_errors": detail_errors[:3],
         }
 
-    if len(candidates) > 1:
-        # group_at_bot 优先于 p2p（群聊场景优先级更高）
-        group_candidate = next((c for c in candidates if c[1] == "group_at_bot"), None)
-        if group_candidate:
-            candidates = [group_candidate]
-        else:
-            return {
-                "ambiguous": True,
-                "matched_count": matched_count,
-                "search_strategy": f"exact_query_mixed_{window_minutes}m",
-            }
+    timed_candidates = [c for c in detailed_candidates if c["time_value"] is not None]
+    if timed_candidates:
+        selected = max(timed_candidates, key=lambda c: (c["time_value"], c["search_order"]))
+    else:
+        selected = detailed_candidates[0]
 
-    msg_id, source = candidates[0]
+    msg = selected["msg"]
+    source = selected["source"]
     expected_chat_type = "group" if source == "group_at_bot" else "p2p"
-    search_strategy = strategies[0] if len(strategies) == 1 else f"exact_query_{source}_15m"
+    search_strategy = f"latest_query_{source}_{window_minutes}m"
 
-    cmd = f"lark-cli im +messages-mget --message-ids '{msg_id}' --as bot"
-    detail_result = _lark_run(cmd)
-
-    detail_data = _load_json_output(detail_result.stdout, detail_result.stderr, "resolve_chat.mget")
-    if detail_data is None:
-        print(json.dumps({"status": "error", "detail": "mget parse failed"},
-                         ensure_ascii=False), file=sys.stderr)
-        return {}
-
-    if not detail_data.get("ok"):
-        error_detail = detail_data.get("error", "mget failed")
-        sys.stderr.write(f"[resolve_chat] mget error: {json.dumps(error_detail, ensure_ascii=False)[:500]}\n")
-        print(json.dumps({"status": "error", "detail": error_detail},
-                         ensure_ascii=False), file=sys.stderr)
-        return {}
-
-    msgs = detail_data.get("data", {}).get("messages", [])
-    if not msgs:
-        return {}
-
-    msg = msgs[0]
     sender = msg.get("sender", {})
     chat_type = msg.get("chat_type") or msg.get("chat_type_v2") or ""
     if not chat_type:
@@ -338,10 +370,12 @@ def resolve_chat(query, window_minutes=15):
         "resolved_chat_type": chat_type,
         "sender_open_id": sender.get("id", ""),
         "sender_name": sender.get("id", ""),
-        "matched_msg_id": msg_id,
+        "matched_msg_id": selected["msg_id"],
         "matched_count": matched_count,
-        "ambiguous": False,
         "search_strategy": search_strategy,
+        "selected_time_field": selected.get("time_field", ""),
+        "selected_time_value": selected.get("time_value"),
+        "detail_errors": detail_errors,
     }
 
 
@@ -551,7 +585,7 @@ def main():
             print(json.dumps({
                 "status": "unresolved",
                 "error": "no_match",
-                "warning": "未搜索到唯一的群聊 @Bot 或私聊 p2p 来源消息，无法确定发送目标",
+                "warning": "未搜索到可用的群聊 @Bot 或私聊 p2p 来源消息，无法确定发送目标",
                 "fallback": "plain_text"
             }, ensure_ascii=False))
             sys.exit(2)
@@ -560,21 +594,12 @@ def main():
             print(json.dumps({
                 "status": "unresolved",
                 "error": resolved.get("error", "no_match"),
-                "warning": "未搜索到唯一的群聊 @Bot 或私聊 p2p 来源消息，无法确定发送目标",
+                "warning": "未搜索到可用的群聊 @Bot 或私聊 p2p 来源消息，无法确定发送目标",
                 "search_strategy": resolved.get("search_strategy"),
                 "matched_count": resolved.get("matched_count", 0),
                 "resolved_chat_type": resolved.get("resolved_chat_type"),
                 "expected_chat_type": resolved.get("expected_chat_type"),
-                "fallback": "plain_text"
-            }, ensure_ascii=False))
-            sys.exit(2)
-
-        if resolved.get("ambiguous"):
-            print(json.dumps({
-                "status": "ambiguous",
-                "matched_count": resolved["matched_count"],
-                "warning": f"搜索到 {resolved['matched_count']} 条匹配消息，无法确定来源，已降级为纯文本输出",
-                "search_strategy": resolved.get("search_strategy"),
+                "detail_errors": resolved.get("detail_errors", []),
                 "fallback": "plain_text"
             }, ensure_ascii=False))
             sys.exit(2)
@@ -585,7 +610,10 @@ def main():
         send_meta.update({
             "search_strategy": resolved.get("search_strategy"),
             "matched_msg_id": resolved.get("matched_msg_id"),
+            "matched_count": resolved.get("matched_count", 0),
             "resolved_chat_type": resolved.get("resolved_chat_type"),
+            "selected_time_field": resolved.get("selected_time_field"),
+            "selected_time_value": resolved.get("selected_time_value"),
         })
         if env_chat_id and env_chat_id != chat_id:
             send_meta["env_chat_conflict"] = {
