@@ -69,31 +69,29 @@ disable: false
 
 健康检查（见业务模块 reference 的 Step 0-4）**始终**属于统计模式。
 
-#### 统计模式完整性铁律
+#### 统计模式分档规则
 
-1. **完整性优先，API 优先**：统计模式下必须拿到完整数据后才能做数值结论。先用 `scripts/cls_query.py --method auto` 走 CLS HTTP API；API 明确完整时可直接统计。API 返回 `is_complete=false`、`error=INCOMPLETE_DATA` 或 `source=api_failed` 时，降级到 WorkBuddy 内置浏览器打开完整 CLS URL、加载全部结果并校验完整性。
+1. **先探测，再决定统计口径**：统计模式先执行 `scripts/cls_query.py --method auto --api-limit 500`，读取 `log_count`、`loaded_count`、`is_complete`、`has_more` 和 `fallback_method`。禁止在未说明完整性状态时输出统计结论。
 
-2. **本地 Chrome 备用路径才用 `--require-complete`**：只有明确切换到本地 Chrome 备用路径并调用 `cls_query.py` 执行/提取时，才必须加 `--require-complete`。无此标志的 `cls_query.py` 执行结果禁止用于任何数值统计。
+2. **小数据默认精确统计**：`is_complete=true` 或 `log_count <= 500` 时，默认输出精确统计。若 API 未完整但 `log_count <= 500`，继续用 WorkBuddy 完整加载或拆分查询补齐后再输出精确数值。
 
-3. **完整性关卡**：先检查结果是否完整；如果 `cls_query.py` 返回 JSON，检查是否存在 `"error": "INCOMPLETE_DATA"`。若存在：
-   - 禁止对已加载数据做任何计数、汇总、占比计算
-   - 必须按 `suggested_actions` 拆分查询后重试
-   - 拆分后仍不完整：飞书兼容文本结论必须在"风险提示:"字段标注"数据不完整/采样值"，所有数值结论加"（采样值，非精确统计）"后缀
+3. **中等数据按用户意图选择**：`500 < log_count <= 1000` 时，用户要求"总数"、"成功率"、"占比"、"准确数量"、"精确统计"等精确口径，必须走完整加载、`--require-complete` 或拆分查询；用户只要求"健康检查"、"趋势"、"分布"、"整体异常情况"时，允许采样统计。
 
-4. **禁止跳过关卡**：只要 `is_complete` 为 false，统计模式下所有百分比、总数、成功率结论都无效。不存在"先看看数据再说"——要么数据完整，要么先拆分。
+4. **大数据默认采样统计**：`log_count > 1000`、`has_more=true` 且无法低成本补齐、或完整性未知时，默认转为采样统计。若用户明确要求精确统计，必须拆分时间/服务/level 查询，或请用户缩小范围。
+
+5. **采样统计输出契约**：采样统计必须在结论或风险提示中明确写"采样统计，非精确统计"；所有数字只能以"样本 N 条中..."表述。禁止输出未限定样本口径的全量总数、全量占比、全量成功率或平均值。
+
+6. **精确统计失败处理**：精确路径返回 `error=INCOMPLETE_DATA` 时，按 `suggested_actions` 拆分查询后重试；仍无法完整时，不输出精确数值，只输出当前阻塞原因、已加载样本范围和下一步建议。
 
 #### 统计模式工作流
 
 ```
-用户请求 → 识别统计关键词 → cls_query.py --method auto --require-complete
-  → source=api 且 is_complete=true → 输出精确统计
-  → API 不完整/失败 → WorkBuddy 内置浏览器打开 cls_url → 加载更多直到完整
-  → WorkBuddy 不可用/页面操作失败/需要批量自动提取
-    → 切换本地 Chrome 备用路径：cls_query.py --method local-chrome --require-complete
-      → is_complete=true → 正常分析，输出精确统计
-      → error=INCOMPLETE_DATA → 按 suggested_actions 拆分
-        → 每段都 --require-complete → 合并完整段数据 → 输出统计
-        → 某段仍不完整 → 飞书兼容文本风险提示 + "采样值" 标注
+用户请求 → 识别统计关键词 → cls_query.py --method auto --api-limit 500
+  → is_complete=true 或 log_count<=500 → 精确统计；API 不完整时先补齐/拆分
+  → 500<log_count<=1000 → 按用户意图选择精确或采样
+  → log_count>1000 / has_more=true / 完整性未知 → 默认采样统计
+  → 用户明确要求精确 → WorkBuddy 完整加载或 local-chrome --require-complete
+    → 仍不完整 → 拆分时间/服务/level 查询；无法完整时只说明阻塞与建议
 ```
 
 #### 非统计模式
@@ -229,7 +227,7 @@ disable: false
 
 | 意图 | 识别特征 | 查询策略 |
 |------|---------|---------|
-| 数据统计 | 统计、汇总、占比、成功率、总数、计数、健康检查、有多少、多少笔 | API 优先并强制完整性；API 不完整则 WorkBuddy；本地 Chrome 备用路径才用 `--require-complete` |
+| 数据统计 | 统计、汇总、占比、成功率、总数、计数、健康检查、有多少、多少笔 | 先用 API 探测；<=500 精确，500-1000 按意图选择，>1000 默认采样 |
 | 流程追踪 | 借款、下单、放款、还款、权益、签约、绑卡、指定 `traceId`/`orderId`/`contractNo` | 路由到业务模块 reference，按入口日志定位 `traceId`，再查全链路 |
 | 健康检查 | 最近有没有异常、无具体标识符 | 使用业务模块 reference 的总览式查询步骤 |
 | SSO/登录 | 浏览器 fallback 跳转 Argus/JANUS/PMP 登录 | 使用 `xh-sso-access` |
@@ -254,7 +252,7 @@ disable: false
 
 1. 提取环境、时间范围、标识符和服务范围；服务范围按"具体 `serviceName` → 表中`别名`对应服务组 → 我们组/客户订单组全表服务"识别 → 分类意图 → 路由到业务模块 reference。
 2. 代码锚点校验（规则见上文"推荐查询锚点校验"），组装 CLS 查询。
-3. **判断是否为统计模式（见"数据统计强制约束"）。是 → `cls_query.py --method auto --require-complete`；API 完整才可统计。**
+3. **判断是否为统计模式（见"数据统计强制约束"）。是 → `cls_query.py --method auto --api-limit 500` 先探测；按 `log_count/is_complete/has_more` 决定精确统计或采样统计。**
 4. 非统计模式默认 `cls_query.py --method auto`。API 不可用或结果不完整时，用返回的 `cls_url` 交给 WorkBuddy 内置浏览器；必要时再显式切换本地 Chrome 备用路径。
 5. 0 命中时按"无结果排查清单"回退。
 6. 分析日志 → 执行「来源识别与飞书卡片发送」→ 优先发送飞书卡片。发送失败、来源缺失或歧义时 fallback 为当前会话纯文本。仅使用本地 Chrome 备用窗口时，最后调用 `cls_query.py --close` 关窗口。
@@ -263,7 +261,7 @@ disable: false
 
 ### 默认：API 优先查询
 
-`cls_query.py` 默认使用 `--method auto`：先走 CLS HTTP API；API 失败或无法确认完整时，返回 `fallback_method: "workbuddy"` 和完整 `cls_url`。只有显式 `--method local-chrome` 或 `--use-local-chrome` 才会打开本地 Chrome。
+`cls_query.py` 默认使用 `--method auto`：先走 CLS HTTP API，默认最多拉取 500 条用于统计探测和小数据精确统计；API 失败或无法确认完整时，返回 `fallback_method: "workbuddy"` 和完整 `cls_url`。只有显式 `--method local-chrome` 或 `--use-local-chrome` 才会打开本地 Chrome。
 
 ```bash
 python3 ${WORKBUDDY_SKILL_DIR}/scripts/cls_query.py \
@@ -309,10 +307,10 @@ python3 ${WORKBUDDY_SKILL_DIR}/scripts/cls_query.py \
 - `expanded_url`：扩大时间范围链接
 - `output_path`：本地 Chrome 备用路径提取的全文路径
 - `log_count`：从\"日志条数\"解析出的结果数（注意：含 `=` 的查询可能退化为全量返回，log_count 不可靠）
-- `completeness_ratio`：加载比例（0.0~1.0），统计模式下必须为 1.0
+- `completeness_ratio`：加载比例（0.0~1.0）；精确统计必须为 1.0，采样统计必须标明样本口径
 - `services`：提取到的服务名
 - `contracts`：提取到的 CK/CS 合同号
-- 统计模式不完整时额外返回：`error`, `error_message`, `action_required`, `suggested_actions`, `PROHIBITION`
+- 精确统计不完整时额外返回：`error`, `error_message`, `action_required`, `suggested_actions`, `PROHIBITION`
 
 ### 备用：本地 Chrome 统计模式查询（强制完整数据）
 
@@ -327,7 +325,7 @@ python3 ${WORKBUDDY_SKILL_DIR}/scripts/cls_query.py \
   --use-local-chrome
 ```
 
-仅在 WorkBuddy 不可用、页面操作失败或需要批量自动提取时使用此备用路径。统计模式下调用 `cls_query.py` 执行/提取必须使用 `--require-complete`；工具自动加载更多数据（最多 200 次）。仍不完整时返回 `error: INCOMPLETE_DATA` 和拆分建议，此时禁止分析已有数据。
+仅在 WorkBuddy 不可用、页面操作失败、需要批量自动提取或用户明确要求精确统计时使用此备用路径。精确统计路径调用 `cls_query.py` 执行/提取必须使用 `--require-complete`；工具自动加载更多数据（最多 200 次）。仍不完整时返回 `error: INCOMPLETE_DATA` 和拆分建议，此时禁止输出精确统计，只能说明阻塞原因、已加载样本范围和下一步建议。
 
 ### 中文查询
 

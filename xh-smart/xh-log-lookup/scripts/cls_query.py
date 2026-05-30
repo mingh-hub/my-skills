@@ -477,7 +477,12 @@ def main() -> int:
     parser.add_argument("--time", dest="time_range")
     parser.add_argument("--expanded-time")
     parser.add_argument("--output", default="/tmp/cls_output.txt")
-    parser.add_argument("--api-limit", type=int, default=100, help="CLS API result limit.")
+    parser.add_argument(
+        "--api-limit",
+        type=int,
+        default=500,
+        help="CLS API result limit. Defaults to 500 for stats probing and small exact stats.",
+    )
     parser.add_argument("--api-timeout", type=int, default=60, help="CLS API timeout in seconds.")
     parser.add_argument("--max-load-more", type=int, default=15)
     parser.add_argument("--delay", type=float, default=1.0)
