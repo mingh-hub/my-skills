@@ -54,12 +54,18 @@ LEVEL_ICON = {"INFO": "\U0001f7e2", "WARN": "\U0001f7e1", "WARNING": "\U0001f7e1
 COLOR_MAP = {"red": "red", "yellow": "yellow", "green": "green", "blue": "blue"}
 CARD_DATA_SCHEMA = {
     "summary_fields": "list[{label, value}]",
-    "call_chain": "list[{level?, time?, service?, content?}]",
+    "call_chain": "list[object], recommended keys: level/time/service/content; aliases are rendered automatically",
     "log_count": "int >= 0",
     "table_data": "list[{headers: list, rows: list[list]}]",
     "analysis": "string",
 }
 CARD_DATA_ALLOWED_KEYS = set(CARD_DATA_SCHEMA)
+CALL_CHAIN_ALIASES = {
+    "level": ("level", "Level", "LEVEL"),
+    "time": ("time", "timestamp", "datetime", "log_time"),
+    "service": ("service", "serviceName", "service_name", "app"),
+    "content": ("content", "message", "msg", "log"),
+}
 
 MD_TABLE_RE = re.compile(
     r'(?:^|\n)'
@@ -146,6 +152,8 @@ def validate_card_data(data):
         for index, item in enumerate(call_chain):
             if not isinstance(item, dict):
                 field_errors.append(f"call_chain[{index}] must be an object")
+            elif not item:
+                field_errors.append(f"call_chain[{index}] must not be empty")
 
     log_count = data.get("log_count", len(call_chain) if isinstance(call_chain, list) else 0)
     if not isinstance(log_count, int) or isinstance(log_count, bool):
@@ -182,6 +190,63 @@ def validate_card_data(data):
         )
 
     return None
+
+
+def _stringify_card_value(value):
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    return str(value)
+
+
+def _first_present_value(item, keys):
+    for key in keys:
+        if key in item:
+            value = _stringify_card_value(item.get(key)).strip()
+            if value:
+                return key, value
+    return "", ""
+
+
+def _format_extra_fields(item, consumed_keys):
+    parts = []
+    for key, value in item.items():
+        if key in consumed_keys:
+            continue
+        text = _stringify_card_value(value).strip()
+        if not text:
+            continue
+        parts.append(f"{key}={text}")
+    return " ".join(parts)
+
+
+def _format_call_chain_item(item):
+    consumed_keys = set()
+    level_key, level = _first_present_value(item, CALL_CHAIN_ALIASES["level"])
+    time_key, timestamp = _first_present_value(item, CALL_CHAIN_ALIASES["time"])
+    service_key, service = _first_present_value(item, CALL_CHAIN_ALIASES["service"])
+    content_key, content = _first_present_value(item, CALL_CHAIN_ALIASES["content"])
+    for key in (level_key, time_key, service_key, content_key):
+        if key:
+            consumed_keys.add(key)
+
+    icon = LEVEL_ICON.get(level.upper(), "\U0001f7e2") if level else "\U0001f7e2"
+    extra = _format_extra_fields(item, consumed_keys)
+    detail = " ".join(part for part in (content, extra) if part).strip()
+    if not detail:
+        detail = _format_extra_fields(item, set())
+
+    line_parts = [icon]
+    if timestamp:
+        line_parts.append(f"`{timestamp}`")
+    if service:
+        line_parts.append(f"**{service}**")
+    if detail:
+        line_parts.append(detail)
+    return " ".join(line_parts)
 
 
 def _load_json_output(stdout, stderr, context):
@@ -647,11 +712,7 @@ def build_card(title, color, cls_url, cls_url_expanded, data,
         display_items = call_chain[:10] if log_count > 20 else call_chain
         chain_lines = []
         for item in display_items:
-            icon = LEVEL_ICON.get(item.get("level", "INFO").upper(), "\U0001f7e2")
-            t = item.get("time", "")
-            svc = item.get("service", "")
-            content = item.get("content", "")
-            chain_lines.append(f"{icon} `{t}` **{svc}** {content}")
+            chain_lines.append(_format_call_chain_item(item))
         if log_count > 20:
             chain_lines.append(f"\n... \u5171 **{log_count}** \u6761\u65e5\u5fd7\uff0c\u4ec5\u5c55\u793a\u6700\u8fd1 10 \u6761")
         elements.append({"tag": "div", "text": {"tag": "lark_md", "content": "\n".join(chain_lines)}})

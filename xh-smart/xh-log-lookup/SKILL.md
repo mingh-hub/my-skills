@@ -178,8 +178,9 @@ SQL 构造顺序：
   - CLS 链接必须包含 `topic_id`、`time`、`queryBase64`；当结果集中在单线程时，URL 只带 `traceId` 即可。
 - `send_feishu_card.py --data` schema 强制契约：
   - 顶层只允许 `summary_fields`、`call_chain`、`log_count`、`table_data`、`analysis`。
-  - `summary_fields` 必须是 `[{label, value}]`；`call_chain` 必须是日志对象列表；`log_count` 必须是 `>=0` 的整数；`table_data` 必须是 `[{headers: list, rows: list[list]}]`；`analysis` 必须是字符串。
+  - `summary_fields` 必须是 `[{label, value}]`；`call_chain` 必须是非空日志对象列表；`log_count` 必须是 `>=0` 的整数；`table_data` 必须是 `[{headers: list, rows: list[list]}]`；`analysis` 必须是字符串。
   - 禁止凭直觉构造 `summary`、`time_range`、`total_logs`、`error_breakdown`、`root_cause` 等自由字段；脚本会以 `invalid_data_schema` 拒绝发送。
+  - `call_chain` 内部字段是自适应渲染，不强制白名单。推荐传 `level/time/service/content`；直接传 CLS 常见字段 `timestamp/serviceName/message/traceId` 也可以，脚本会识别 `timestamp` 为时间、`serviceName` 为服务、`message` 为正文，并把 `traceId` 等未识别字段追加成 `key=value` 展示。
   - `log_count > 0` 时，必须至少提供 `summary_fields`、`call_chain`、`table_data` 或 `analysis` 中的一种可渲染内容；只有 `log_count == 0` 且无内容时才允许渲染"无匹配日志"。
   - 该 schema 是飞书卡片渲染契约，不是统计专用 schema。单线程/非统计查询可用 `call_chain` 表达链路日志，用 `analysis` 表达根因结论，用 `summary_fields` 放 `traceId`、`orderId`、结论等摘要；只要使用这五个顶层 key，就不会因为不是统计结果而被拦截。
 - 纯文本 fallback 格式契约：
