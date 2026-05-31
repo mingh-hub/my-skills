@@ -147,7 +147,7 @@ disable: false
 
 ### 结论输出规则
 
-- 诊断结论必须先调用 `scripts/send_feishu_card.py` 发送飞书交互式卡片到当前提问来源；发送脚本返回非 0 时，才降级为当前会话纯文本 fallback。禁止在未调用发送脚本前直接输出最终文本结论。
+- 诊断结论必须先调用 `scripts/send_feishu_card.py --quiet-success` 发送飞书交互式卡片到当前提问来源；发送脚本退出码为 0 时，当前会话不得再输出诊断结论、摘要、证据、CLS 链接或卡片内容。发送脚本返回非 0 时，才降级为当前会话纯文本 fallback。禁止在未调用发送脚本前直接输出最终文本结论。
 - 飞书卡片消息格式：
   - 可以使用卡片 native table、lark_md、代码块、链接和按钮。
   - 群聊卡片可在正文中 @ 提问者；私聊场景不需要 @。
@@ -156,13 +156,13 @@ disable: false
   - 允许：普通文本、换行、简单分段、短横线列表、数字编号、粗体标签、普通 URL 或 `[文本](URL)` 链接、@。
   - 禁止：Markdown 表格、表格分隔线、代码块、HTML 表格、复杂嵌套列表、飞书卡片语法。
   - 输出前必须自检：如果最终回复中出现 `| 时间 | 服务 | 事件 |`、`|---|---|`、`|-----|-----|`、任意以 `|` 开头且包含多个 `|` 分隔列的行，必须改写成逐行列表；如果出现 fenced code block，必须改写成普通文本。
-- 每次结论须包含：查了什么代码/日志前缀、CLS 查询语句/topic/时间范围、命中摘要与未命中证据、完整性状态（`loaded_count` vs `log_count`）、关键节点时间（`timestamp` 格式）、CLS URL 链接、卡片发送状态。
+- 飞书卡片内容或纯文本 fallback 须包含：查了什么代码/日志前缀、CLS 查询语句/topic/时间范围、命中摘要与未命中证据、完整性状态（`loaded_count` vs `log_count`）、关键节点时间（`timestamp` 格式）、CLS URL 链接、卡片发送状态。
 
 ### 来源识别与飞书卡片发送
 
 技能被触发后，在输出最终结论前执行以下流程：
 
-1. **必须先调用发送脚本**：最终结论生成后，先执行 `send_feishu_card.py`。不要先输出普通文本结论；只有发送脚本返回非 0 或明确失败状态时，才输出纯文本 fallback。
+1. **必须先调用发送脚本**：最终结论生成后，先执行 `send_feishu_card.py --quiet-success`。不要先输出普通文本结论；只有发送脚本返回非 0 或明确失败状态时，才输出纯文本 fallback。
 
 2. **来源优先级**：`--chat` 是人工显式指定目标，优先级最高。WorkBuddy 正常路径必须使用 `--resolve-chat --query "{用户原始问题}"`，并以来源反查选定的 `chat_id` 作为发送目标。`FEISHU_CURRENT_CHAT_ID` / `AGENT_CURRENT_CHAT_ID` 等环境变量只作为未传 `--resolve-chat` 时的兼容路径，不能覆盖或短路反查结果。
 
@@ -180,11 +180,13 @@ disable: false
      --resolve-chat --query "{用户原始问题}" \
      --resolve-window-minutes 15 \
      --at-sender \
+     --quiet-success \
      --title "..." --color "..." --data "..."
    ```
    - 正常路径必须保留 `--resolve-chat --query`；只要传入 `--resolve-chat`，脚本就必须使用原始问题 + 时间窗反查群聊和私聊来源，并在多命中时选择最新消息，环境变量不得短路发送目标
    - 需要人工指定目标时可传 `--chat "{chat_id}"`
-   - 发送脚本返回 `status: "sent"` → 不再输出重复纯文本结论
+   - 发送脚本退出码为 0 → 视为卡片已发送，当前会话不得再输出诊断结论、摘要、证据、CLS 链接或卡片内容
+   - 如果 WorkBuddy/Hermes 宿主强制要求非空最终回复，只输出 `已发送飞书卡片。`，不得附加任何诊断细节
    - 发送脚本非 0 或 `status: "unresolved"` → 当前会话输出飞书兼容纯文本结论，并说明卡片失败原因
    - 如果环境变量 chat_id 与反查选定的 chat_id 不一致，发送脚本仍使用反查结果，并在状态中记录 `env_chat_conflict`
    - 最近 15 分钟窗口外的历史相同问题不算多命中；窗口内相同 query 以 `create_time` 最新消息为准
@@ -222,7 +224,7 @@ disable: false
 3. **判断是否为统计模式（见"数据统计强制约束"）。是 → `cls_query.py --method auto --api-limit 500` 先探测；按 `log_count/is_complete/has_more` 决定精确统计或采样统计。**
 4. 非统计模式默认 `cls_query.py --method auto`。API 不可用或结果不完整时，用返回的 `cls_url` 交给 WorkBuddy 内置浏览器；必要时再显式切换本地 Chrome 备用路径。
 5. 0 命中时按"无结果排查清单"回退。
-6. 分析日志 → 执行「来源识别与飞书卡片发送」→ 优先发送飞书卡片。发送失败、来源缺失或歧义时 fallback 为当前会话纯文本。仅使用本地 Chrome 备用窗口时，最后调用 `cls_query.py --close` 关窗口。
+6. 分析日志 → 执行「来源识别与飞书卡片发送」→ 优先发送飞书卡片。发送成功后当前会话静默或只输出 `已发送飞书卡片。`；发送失败、来源缺失或候选详情获取失败时 fallback 为当前会话纯文本。仅使用本地 Chrome 备用窗口时，最后调用 `cls_query.py --close` 关窗口。
 
 ## CLS 工具
 
@@ -329,7 +331,7 @@ URL: `https://datasight-1300455117.internal.clsconsole.tencent-cloud.com/cls/sea
 
 ## 飞书卡片结论与纯文本 fallback
 
-最终结论优先使用飞书卡片。只有卡片发送失败、来源缺失或歧义时，才使用字段化纯文本 fallback，避免表格、代码块、复杂嵌套列表和卡片语法。fallback 推荐结构：
+最终结论优先使用飞书卡片。卡片发送成功后，当前会话静默或只输出 `已发送飞书卡片。`。只有卡片发送失败、来源缺失或候选详情获取失败时，才使用字段化纯文本 fallback，避免表格、代码块、复杂嵌套列表和卡片语法。fallback 推荐结构：
 
 结论: 一句话说明结果、根因或当前健康状态。
 查询范围: 环境、时间范围、topic、CLS 查询语句。

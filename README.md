@@ -54,7 +54,7 @@ my-skills/
 - **服务范围**：按“具体 `serviceName` → 表中别名对应服务组 → 客户订单组全表服务”识别。
 - **统计模式**：先用 `cls_query.py --method auto --api-limit 500` 探测；`<=500` 默认精确，`500-1000` 按用户意图选择精确或采样，`>1000` 默认采样；采样统计必须写明“采样统计，非精确统计”。
 - **来源反查**：飞书卡片默认用用户原始问题 + 最近 15 分钟窗口反查群聊 @Tom 或私聊 p2p 来源；多条相同 query 命中时按 `create_time` 选择最新消息。
-- **输出规则**：最终结论优先通过 `send_feishu_card.py` 发送飞书卡片；卡片发送失败、来源缺失或候选详情获取失败时，才降级为当前会话纯文本 fallback。
+- **输出规则**：最终结论优先通过 `send_feishu_card.py --quiet-success` 发送飞书卡片；卡片成功后当前会话静默或只做极短确认，失败、来源缺失或候选详情获取失败时才降级为纯文本 fallback。
 - **废弃路径**：不再维护 Argus iframe 穿透方案；直接打开完整 CLS URL，WorkBuddy 优先，本地 Chrome 是备用路径。
 
 ## 工具
@@ -62,7 +62,7 @@ my-skills/
 | 工具 | 路径 | 说明 |
 | ---- | ---- | ---- |
 | `cls_query.py` | `xh-smart/xh-log-lookup/scripts/` | 优先通过 CLS HTTP API 查询日志；默认 `--api-limit 500`，用于统计探测和小数据精确统计；必要时输出 WorkBuddy fallback URL，显式选择时才用本地 Chrome/AppleScript |
-| `send_feishu_card.py` | `xh-smart/xh-log-lookup/scripts/` | 发送飞书交互式卡片；支持 `--resolve-chat --query` 来源反查、最近 15 分钟窗口、多命中取最新、群聊 sender 自动 @ 和纯文本 fallback 状态返回 |
+| `send_feishu_card.py` | `xh-smart/xh-log-lookup/scripts/` | 发送飞书交互式卡片；支持 `--resolve-chat --query` 来源反查、最近 15 分钟窗口、多命中取最新、群聊 sender 自动 @、`--quiet-success` 成功静默和纯文本 fallback 状态返回 |
 | `resolve_workspace.py` | `xh-smart/xh-log-lookup/scripts/` | 按 `XH_WORKSPACE_ROOTS` 和项目名自动定位本地源码仓库，并可更新 `SKILL.md` 服务映射表中的本地路径 |
 | `validate_query_anchors.py` | `xh-smart/xh-log-lookup/scripts/` | 校验业务 reference 中推荐查询的代码锚点是否仍与源码匹配 |
 | `skill_config.py` | `xh-smart/xh-log-lookup/scripts/` | 内部共享解析工具，供其它脚本读取/渲染 `SKILL.md` 服务映射表 |
@@ -72,7 +72,7 @@ my-skills/
 ## 环境要求
 
 - **Python 3.9+** — `xh-log-lookup` 主要工具仅依赖标准库。
-- **WorkBuddy/飞书运行环境** — `xh-log-lookup` 通过 `send_feishu_card.py` + `lark-cli` 发送飞书卡片；来源缺失或候选详情获取失败时降级为当前会话文本回复。
+- **WorkBuddy/飞书运行环境** — `xh-log-lookup` 通过 `send_feishu_card.py` + `lark-cli` 发送飞书卡片；成功后当前会话静默或极短确认，来源缺失或候选详情获取失败时降级为当前会话文本回复。
 - **macOS + Google Chrome** — 仅 WorkBuddy 不可用、页面操作失败或需要本地 Chrome 备用提取时需要。
 - 可选：`cryptography` Python 包，仅 `xh-sso-access/tools/test_encrypt.py` 需要。
 

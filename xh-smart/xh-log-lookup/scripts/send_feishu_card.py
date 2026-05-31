@@ -467,7 +467,7 @@ def build_card(title, color, cls_url, cls_url_expanded, data,
     return card
 
 
-def send_card(chat_id, card, chat_source, meta=None):
+def send_card(chat_id, card, chat_source, meta=None, quiet_success=False):
     """通过 lark-cli bot 身份发送飞书卡片"""
     card_json = json.dumps(card, ensure_ascii=False)
     meta = meta or {}
@@ -511,6 +511,8 @@ def send_card(chat_id, card, chat_source, meta=None):
 
     if data.get("ok"):
         msg_id = data.get("data", {}).get("message_id", "unknown")
+        if quiet_success:
+            return
         output = {"status": "sent", "message_id": msg_id,
                   "chat_id": chat_id, "chat_source": chat_source}
         if meta:
@@ -551,6 +553,8 @@ def main():
                         help="CLS 原始文本，自动解析为 call_chain（替代手动构建 --data 中的 call_chain）")
     parser.add_argument("--data", required=True,
                         help="JSON: {summary_fields, call_chain, analysis, log_count}")
+    parser.add_argument("--quiet-success", action="store_true",
+                        help="发送成功时不向 stdout 输出 status JSON，用于避免宿主应用重复回复")
 
     args = parser.parse_args()
 
@@ -664,7 +668,7 @@ def main():
     else:
         card = build_card(args.title, args.color, args.cls_url, args.cls_url_expanded, data)
 
-    send_card(chat_id, card, chat_source, meta=send_meta)
+    send_card(chat_id, card, chat_source, meta=send_meta, quiet_success=args.quiet_success)
 
 
 if __name__ == "__main__":
