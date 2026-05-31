@@ -56,7 +56,7 @@ disable: false
 - 本技能只处理已由 WorkBuddy/Claw 触发的请求：私聊 Tom，或群聊中明确 `@Tom` / 被判定为对 Tom 的直接提及。
 - 如果运行上下文显示这是群聊消息且未直接提及 Tom，应立即停止；不要查询 CLS、不要读取本地代码、不要发送飞书卡片，也不要输出诊断结论。
 - 私聊 Tom 时不需要 `@Tom`，直接按本技能流程处理，并优先把飞书卡片发送回该私聊会话。
-- 触发后，发送目标必须是当前提问来源；无法确认来源或卡片发送失败时，只能在当前会话输出纯文本 fallback。
+- 触发后，发送目标优先是当前提问来源；无法确认来源时，若已配置 WorkBuddy 默认私聊目标则发送到该私聊，否则才允许在当前会话输出纯文本 fallback。
 
 ### 数据统计强制约束
 
@@ -83,6 +83,10 @@ disable: false
 
 6. **精确统计失败处理**：精确路径返回 `error=INCOMPLETE_DATA` 时，按 `suggested_actions` 拆分查询后重试；仍无法完整时，不输出精确数值，只输出当前阻塞原因、已加载样本范围和下一步建议。
 
+7. **多类别 OR 查询拆分优先**：当查询同时包含多个互斥类别，且 `has_more=true`、`is_complete=false`、`loaded_count >= api-limit` 或完整性未知时，禁止直接基于合并查询样本输出分类结论。互斥类别包括多个 `level`、多个 `serviceName`、多个业务锚点。拆分优先级固定为：先按 `level` 拆分，尤其 `ERROR` 和 `WARN` 必须分开查；再按 `serviceName` 拆分；最后按业务锚点或时间窗口拆分。
+
+8. **异常/健康检查默认拆查顺序**：当用户关注异常、告警、健康检查或其他可能混入多种级别的场景时，默认先单查 `level:"ERROR"`，再单查 `level:"WARN"`。如果任一子查询仍 `has_more=true` 或 `is_complete=false`，继续按服务拆分后再分析；禁止把合并 OR 查询的 500 条样本当作 `ERROR` / `WARN` 全量分布。
+
 #### 统计模式工作流
 
 ```
@@ -91,7 +95,7 @@ disable: false
   → 500<log_count<=1000 → 按用户意图选择精确或采样
   → log_count>1000 / has_more=true / 完整性未知 → 默认采样统计
   → 用户明确要求精确 → WorkBuddy 完整加载或 local-chrome --require-complete
-    → 仍不完整 → 拆分时间/服务/level 查询；无法完整时只说明阻塞与建议
+    → 仍不完整 → 先按 level 拆分，再按 serviceName 拆分，再按时间/业务锚点拆分；无法完整时只说明阻塞与建议
 ```
 
 #### 非统计模式
@@ -182,17 +186,18 @@ SQL 构造顺序：
 
 1. **必须先调用发送脚本**：最终结论生成后，先执行 `send_feishu_card.py --quiet-success`。不要先输出普通文本结论；只有发送脚本返回非 0 或明确失败状态时，才输出纯文本 fallback。
 
-2. **来源优先级**：`--chat` 是人工显式指定目标，优先级最高。WorkBuddy 正常路径必须使用 `--resolve-chat --query "{用户原始问题}"`，并以来源反查选定的 `chat_id` 作为发送目标。`FEISHU_CURRENT_CHAT_ID` / `AGENT_CURRENT_CHAT_ID` 等环境变量只作为未传 `--resolve-chat` 时的兼容路径，不能覆盖或短路反查结果。
+2. **来源优先级**：`--chat` 是人工显式指定目标，优先级最高。WorkBuddy 正常路径必须使用 `--resolve-chat --query "{用户原始问题}"`，并以来源反查选定的 `chat_id` 作为发送目标。`WORKBUDDY_HOME_CHANNEL_CHAT_ID` 只在来源反查失败时兜底；`FEISHU_CURRENT_CHAT_ID` / `AGENT_CURRENT_CHAT_ID` 等环境变量只作为更低优先级兼容路径，不能覆盖或短路成功反查结果。
 
 3. **反查来源**：`--resolve-chat` 使用 `send_feishu_card.py` 的当前实现为准：用用户原始问题精确搜索最近 15 分钟内的群聊 @Bot 消息和私聊 p2p 消息。群聊 query 去掉 `@Tom` 和首尾空白，私聊直接使用用户输入正文；不要改写、总结或替换成分析标题。
+4. **WorkBuddy 直问兜底**：如果 `--resolve-chat` 未反查到可用来源，但已配置 `WORKBUDDY_HOME_CHANNEL_CHAT_ID`，则将卡片发送到该 home channel 私聊；只有该目标也不存在时，才降级为纯文本 fallback。
 
-4. **当前脚本行为**：
-   - 单一来源命中 0 条 → 搜不到来源，fallback 为当前会话纯文本。
+5. **当前脚本行为**：
+   - 单一来源命中 0 条 → 搜不到来源；若配置了 `WORKBUDDY_HOME_CHANNEL_CHAT_ID`，发送到该 home channel 私聊，否则 fallback 为当前会话纯文本。
    - 单一来源或跨来源多命中 → 以 `create_time` 最新的一条作为发送目标。
    - `messages-mget` 返回的 `chat_type` 缺失或异常时，当前脚本按搜索分支兜底为 `group` 或 `p2p`。
    - 群聊解析到 sender 时会自动 @ 提问者；显式 `--at-sender` 仍可传入，但不是唯一 @ 条件。
 
-5. **发送卡片**：
+6. **发送卡片**：
    ```bash
    python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py \
      --resolve-chat --query "{用户原始问题}" \
@@ -205,7 +210,7 @@ SQL 构造顺序：
    - 需要人工指定目标时可传 `--chat "{chat_id}"`
    - 发送脚本退出码为 0 → 视为卡片已发送，当前会话不得再输出诊断结论、摘要、证据、CLS 链接或卡片内容
    - 如果 WorkBuddy/Hermes 宿主强制要求非空最终回复，只输出 `已发送飞书卡片。`，不得附加任何诊断细节
-   - 发送脚本非 0 或 `status: "unresolved"` → 当前会话输出飞书兼容纯文本结论，并说明卡片失败原因
+   - 发送脚本非 0 或 `status: "unresolved"` → 当前会话输出飞书兼容纯文本结论，并说明卡片失败原因；如果 `error=missing_private_target`，提示配置 `WORKBUDDY_HOME_CHANNEL_CHAT_ID`
    - 如果环境变量 chat_id 与反查选定的 chat_id 不一致，发送脚本仍使用反查结果，并在状态中记录 `env_chat_conflict`
    - 最近 15 分钟窗口外的历史相同问题不算多命中；窗口内相同 query 以 `create_time` 最新消息为准
    - 如果最终结论已经以普通文本输出，但本轮没有 `send_feishu_card.py` 调用记录，视为违反本技能输出规则

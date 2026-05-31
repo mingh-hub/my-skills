@@ -69,6 +69,8 @@
 
 健康检查每个 Step 都必须直接使用下表 SQL 查询，禁止先查 `serviceName:"order"` 再从返回日志里筛 Step0-3 的结果。Step2 的成功数可以在 `message:"[借款下单]下单请求结果为"` 命中结果内解析 `success=true`，但不能从裸订单日志样本里统计成功数。
 
+当"下单异常/订单异常"同时关注 `ERROR` 和 `WARN` 时，必须先执行 `level:"ERROR"` 查询，再执行 `level:"WARN"` 查询，禁止用 `(level:"ERROR" OR level:"WARN")` 的合并样本直接判断分布。如果覆盖 `order`、`order-batch`、`order-batch-timing` 后任一合并查询 `has_more=true` 或不完整，必须继续逐服务拆分。`mqResendJob` 等 `order-batch-timing` 异常归为订单组服务异常；如果用户明确说"下单链路异常"，核心优先查 `order`，再按 traceId 或证据扩展到关联服务。
+
 Step 0 使用 `level:"ERROR"` 通用查询，不依赖代码锚点，可直接执行。Step 1-3 的中文日志前缀（`[借款下单]下单请求为` 等）依赖代码，首次使用前必须用 `validate_query_anchors.py` 或 grep 本地代码确认锚点仍存在。
 
 | Step | 查询sql | 说明 |

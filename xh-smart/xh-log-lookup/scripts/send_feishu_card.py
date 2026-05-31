@@ -18,6 +18,9 @@
     --color blue \
     --data '{"analysis": "...", "log_count": 20}'
 
+  # WorkBuddy 直问：反查不到飞书来源时，发到 home channel 私聊目标
+  WORKBUDDY_HOME_CHANNEL_CHAT_ID=oc_xxx
+
 标题格式: [emoji] 场景简述 · 时间范围
 颜色: red(ERROR/阻断) / yellow(WARN/拦截) / green(全部正常) / blue(常规)
 """
@@ -41,6 +44,11 @@ CURRENT_SENDER_ENV_KEYS = (
     "FEISHU_SENDER_OPEN_ID",
 )
 EXTRA_CHAT_ENV_KEYS = ("WORKBUDDY_CURRENT_CHAT_ID", "CHAT_ID", "CURRENT_CHAT_ID", "FEISHU_CHAT_ID")
+DEFAULT_PRIVATE_CHAT_ENV_KEYS = (
+    "WORKBUDDY_HOME_CHANNEL_CHAT_ID",
+    "FEISHU_DEFAULT_PRIVATE_CHAT_ID",
+    "AGENT_DEFAULT_PRIVATE_CHAT_ID",
+)
 
 LEVEL_ICON = {"INFO": "\U0001f7e2", "WARN": "\U0001f7e1", "WARNING": "\U0001f7e1", "ERROR": "\U0001f534"}
 COLOR_MAP = {"red": "red", "yellow": "yellow", "green": "green", "blue": "blue"}
@@ -379,6 +387,138 @@ def resolve_chat(query, window_minutes=15):
     }
 
 
+def _source_resolution_meta(resolved, fallback, env_key=""):
+    resolved = resolved or {}
+    meta = {
+        "status": "source_unresolved",
+        "error": resolved.get("error", "no_match"),
+        "search_strategy": resolved.get("search_strategy"),
+        "matched_count": resolved.get("matched_count", 0),
+        "resolved_chat_type": resolved.get("resolved_chat_type"),
+        "expected_chat_type": resolved.get("expected_chat_type"),
+        "detail_errors": resolved.get("detail_errors", []),
+        "fallback": fallback,
+    }
+    if env_key:
+        meta["env_key"] = env_key
+    return meta
+
+
+def resolve_send_target(
+    args,
+    env_chat_id,
+    chat_key,
+    chat_type,
+    chat_type_key,
+    sender_open_id,
+    sender_key,
+    default_private_key,
+    default_private_chat_id,
+    resolver=resolve_chat,
+):
+    sender_info = {}
+    send_meta = {}
+
+    if args.chat:
+        return args.chat, "--chat", sender_info, send_meta, None
+
+    if args.resolve_chat:
+        if not args.query.strip():
+            return None, "", sender_info, send_meta, {
+                "status": "error",
+                "error": "missing_query",
+                "message": "--resolve-chat 必须传 --query 用户原始问题，禁止无 query 反查来源。",
+                "fallback": "plain_text",
+            }
+
+        resolved = resolver(args.query, args.resolve_window_minutes)
+        if resolved and not resolved.get("unresolved") and resolved.get("chat_id"):
+            chat_id = resolved["chat_id"]
+            chat_source = resolved.get("search_strategy") or "--resolve-chat"
+            sender_info = resolved
+            send_meta.update({
+                "search_strategy": resolved.get("search_strategy"),
+                "matched_msg_id": resolved.get("matched_msg_id"),
+                "matched_count": resolved.get("matched_count", 0),
+                "resolved_chat_type": resolved.get("resolved_chat_type"),
+                "selected_time_field": resolved.get("selected_time_field"),
+                "selected_time_value": resolved.get("selected_time_value"),
+            })
+            if env_chat_id and env_chat_id != chat_id:
+                send_meta["env_chat_conflict"] = {
+                    "env_key": chat_key,
+                    "env_chat_id": env_chat_id,
+                    "resolved_chat_id": chat_id,
+                }
+            return chat_id, chat_source, sender_info, send_meta, None
+
+        if resolved and not resolved.get("unresolved"):
+            resolved = {
+                **resolved,
+                "unresolved": True,
+                "error": "missing_resolved_chat_id",
+            }
+
+        if default_private_chat_id:
+            send_meta["source_resolution"] = _source_resolution_meta(
+                resolved,
+                "default_private_chat",
+                default_private_key,
+            )
+            return default_private_chat_id, default_private_key, sender_info, send_meta, None
+
+        if env_chat_id:
+            send_meta["source_resolution"] = _source_resolution_meta(
+                resolved,
+                "current_env_chat",
+                chat_key,
+            )
+            return env_chat_id, chat_key, sender_info, send_meta, None
+
+        source_meta = _source_resolution_meta(resolved, "plain_text")
+        return None, "", sender_info, send_meta, {
+            "status": "unresolved",
+            "error": "missing_private_target",
+            "source_error": source_meta.get("error", "no_match"),
+            "warning": (
+                "未搜索到可用的群聊 @Bot 或私聊 p2p 来源消息，且未配置 "
+                "WORKBUDDY_HOME_CHANNEL_CHAT_ID，无法确定发送目标"
+            ),
+            "search_strategy": source_meta.get("search_strategy"),
+            "matched_count": source_meta.get("matched_count", 0),
+            "resolved_chat_type": source_meta.get("resolved_chat_type"),
+            "expected_chat_type": source_meta.get("expected_chat_type"),
+            "detail_errors": source_meta.get("detail_errors", []),
+            "fallback": "plain_text",
+        }
+
+    if default_private_chat_id:
+        return default_private_chat_id, default_private_key, sender_info, send_meta, None
+
+    if env_chat_id:
+        if sender_open_id:
+            sender_info = {
+                "sender_open_id": sender_open_id,
+                "sender_name": sender_open_id,
+                "chat_type": chat_type if chat_type in ("group", "p2p") else "group",
+                "chat_source": chat_key,
+                "sender_source": sender_key,
+                "chat_type_source": chat_type_key,
+            }
+        return env_chat_id, chat_key, sender_info, send_meta, None
+
+    return None, "", sender_info, send_meta, {
+        "status": "error",
+        "error": "missing_chat",
+        "message": (
+            "缺少发送目标：请传 --chat，或配置 WORKBUDDY_HOME_CHANNEL_CHAT_ID，"
+            "或由 WorkBuddy 注入 FEISHU_CURRENT_CHAT_ID / AGENT_CURRENT_CHAT_ID，"
+            "或显式使用 --resolve-chat --query。"
+        ),
+        "fallback": "plain_text",
+    }
+
+
 def build_card(title, color, cls_url, cls_url_expanded, data,
                sender_open_id="", sender_name="", chat_type="group"):
     elements = []
@@ -570,83 +710,23 @@ def main():
     chat_key, env_chat_id = _first_env(CURRENT_CHAT_ENV_KEYS)
     if not env_chat_id:
         chat_key, env_chat_id = _first_env(EXTRA_CHAT_ENV_KEYS)
+    default_private_key, default_private_chat_id = _first_env(DEFAULT_PRIVATE_CHAT_ENV_KEYS)
 
-    if args.chat:
-        chat_id = args.chat
-        chat_source = "--chat"
-    elif args.resolve_chat:
-        if not args.query.strip():
-            print(json.dumps({
-                "status": "error",
-                "error": "missing_query",
-                "message": "--resolve-chat 必须传 --query 用户原始问题，禁止无 query 反查来源。",
-                "fallback": "plain_text"
-            }, ensure_ascii=False), file=sys.stderr)
-            sys.exit(1)
-
-        resolved = resolve_chat(args.query, args.resolve_window_minutes)
-        if not resolved:
-            print(json.dumps({
-                "status": "unresolved",
-                "error": "no_match",
-                "warning": "未搜索到可用的群聊 @Bot 或私聊 p2p 来源消息，无法确定发送目标",
-                "fallback": "plain_text"
-            }, ensure_ascii=False))
-            sys.exit(2)
-
-        if resolved.get("unresolved"):
-            print(json.dumps({
-                "status": "unresolved",
-                "error": resolved.get("error", "no_match"),
-                "warning": "未搜索到可用的群聊 @Bot 或私聊 p2p 来源消息，无法确定发送目标",
-                "search_strategy": resolved.get("search_strategy"),
-                "matched_count": resolved.get("matched_count", 0),
-                "resolved_chat_type": resolved.get("resolved_chat_type"),
-                "expected_chat_type": resolved.get("expected_chat_type"),
-                "detail_errors": resolved.get("detail_errors", []),
-                "fallback": "plain_text"
-            }, ensure_ascii=False))
-            sys.exit(2)
-
-        chat_id = resolved["chat_id"]
-        chat_source = resolved.get("search_strategy") or "--resolve-chat"
-        sender_info = resolved
-        send_meta.update({
-            "search_strategy": resolved.get("search_strategy"),
-            "matched_msg_id": resolved.get("matched_msg_id"),
-            "matched_count": resolved.get("matched_count", 0),
-            "resolved_chat_type": resolved.get("resolved_chat_type"),
-            "selected_time_field": resolved.get("selected_time_field"),
-            "selected_time_value": resolved.get("selected_time_value"),
-        })
-        if env_chat_id and env_chat_id != chat_id:
-            send_meta["env_chat_conflict"] = {
-                "env_key": chat_key,
-                "env_chat_id": env_chat_id,
-                "resolved_chat_id": chat_id,
-            }
-    else:
-        if env_chat_id:
-            chat_id = env_chat_id
-            chat_source = chat_key
-            if sender_open_id:
-                sender_info = {
-                    "sender_open_id": sender_open_id,
-                    "sender_name": sender_open_id,
-                    "chat_type": chat_type if chat_type in ("group", "p2p") else "group",
-                    "chat_source": chat_key,
-                    "sender_source": sender_key,
-                    "chat_type_source": chat_type_key,
-                }
-
-    if not chat_id:
-        print(json.dumps({
-            "status": "error",
-            "error": "missing_chat",
-            "message": "缺少发送目标：请传 --chat，或由 WorkBuddy 注入 FEISHU_CURRENT_CHAT_ID / AGENT_CURRENT_CHAT_ID，或显式使用 --resolve-chat --query。",
-            "fallback": "plain_text"
-        }, ensure_ascii=False), file=sys.stderr)
-        sys.exit(1)
+    chat_id, chat_source, sender_info, send_meta, target_error = resolve_send_target(
+        args,
+        env_chat_id,
+        chat_key,
+        chat_type,
+        chat_type_key,
+        sender_open_id,
+        sender_key,
+        default_private_key,
+        default_private_chat_id,
+    )
+    if target_error:
+        stream = sys.stderr if target_error.get("status") == "error" else sys.stdout
+        print(json.dumps(target_error, ensure_ascii=False), file=stream)
+        sys.exit(1 if target_error.get("status") == "error" else 2)
 
     data = json.loads(args.data)
 

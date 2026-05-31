@@ -1,0 +1,180 @@
+#!/usr/bin/env python3
+import importlib.util
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+
+
+SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "send_feishu_card.py"
+SPEC = importlib.util.spec_from_file_location("send_feishu_card", SCRIPT_PATH)
+send_feishu_card = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(send_feishu_card)
+
+
+class ResolveSendTargetTest(unittest.TestCase):
+    def _args(self, chat=None, resolve_chat=False, query="raw question"):
+        return SimpleNamespace(
+            chat=chat,
+            resolve_chat=resolve_chat,
+            query=query,
+            resolve_window_minutes=15,
+        )
+
+    def _select(
+        self,
+        args,
+        resolver,
+        env_chat_id="",
+        default_private_chat_id="",
+    ):
+        return send_feishu_card.resolve_send_target(
+            args=args,
+            env_chat_id=env_chat_id,
+            chat_key="FEISHU_CURRENT_CHAT_ID" if env_chat_id else "",
+            chat_type="group",
+            chat_type_key="FEISHU_CURRENT_CHAT_TYPE",
+            sender_open_id="ou_env_sender",
+            sender_key="FEISHU_CURRENT_SENDER_OPEN_ID",
+            default_private_key=(
+                "WORKBUDDY_HOME_CHANNEL_CHAT_ID"
+                if default_private_chat_id else ""
+            ),
+            default_private_chat_id=default_private_chat_id,
+            resolver=resolver,
+        )
+
+    def test_chat_argument_has_highest_priority(self):
+        def resolver(query, window_minutes):
+            raise AssertionError("resolver should not be called")
+
+        chat_id, chat_source, sender_info, send_meta, error = self._select(
+            self._args(chat="oc_manual"),
+            resolver,
+            env_chat_id="oc_env",
+            default_private_chat_id="oc_private",
+        )
+
+        self.assertEqual(chat_id, "oc_manual")
+        self.assertEqual(chat_source, "--chat")
+        self.assertEqual(sender_info, {})
+        self.assertEqual(send_meta, {})
+        self.assertIsNone(error)
+
+    def test_resolved_feishu_source_wins_over_default_private(self):
+        def resolver(query, window_minutes):
+            return {
+                "chat_id": "oc_group",
+                "chat_type": "group",
+                "resolved_chat_type": "group",
+                "sender_open_id": "ou_sender",
+                "sender_name": "ou_sender",
+                "matched_msg_id": "om_msg",
+                "matched_count": 1,
+                "search_strategy": "latest_query_group_at_bot_15m",
+                "selected_time_field": "create_time",
+                "selected_time_value": 1780200000000,
+            }
+
+        chat_id, chat_source, sender_info, send_meta, error = self._select(
+            self._args(resolve_chat=True),
+            resolver,
+            env_chat_id="oc_env",
+            default_private_chat_id="oc_private",
+        )
+
+        self.assertEqual(chat_id, "oc_group")
+        self.assertEqual(chat_source, "latest_query_group_at_bot_15m")
+        self.assertEqual(sender_info["sender_open_id"], "ou_sender")
+        self.assertEqual(sender_info["chat_type"], "group")
+        self.assertEqual(send_meta["matched_msg_id"], "om_msg")
+        self.assertIn("env_chat_conflict", send_meta)
+        self.assertIsNone(error)
+
+    def test_unresolved_source_uses_default_private_chat(self):
+        def resolver(query, window_minutes):
+            return {
+                "unresolved": True,
+                "error": "no_match",
+                "matched_count": 0,
+                "search_strategy": "latest_query_mixed_15m",
+            }
+
+        chat_id, chat_source, sender_info, send_meta, error = self._select(
+            self._args(resolve_chat=True),
+            resolver,
+            default_private_chat_id="oc_private",
+        )
+
+        self.assertEqual(chat_id, "oc_private")
+        self.assertEqual(chat_source, "WORKBUDDY_HOME_CHANNEL_CHAT_ID")
+        self.assertEqual(sender_info, {})
+        self.assertEqual(send_meta["source_resolution"]["status"], "source_unresolved")
+        self.assertEqual(send_meta["source_resolution"]["fallback"], "default_private_chat")
+        self.assertIsNone(error)
+
+    def test_resolved_source_without_chat_id_uses_default_private_chat(self):
+        def resolver(query, window_minutes):
+            return {
+                "chat_type": "p2p",
+                "resolved_chat_type": "p2p",
+                "matched_count": 1,
+                "search_strategy": "latest_query_p2p_15m",
+            }
+
+        chat_id, chat_source, sender_info, send_meta, error = self._select(
+            self._args(resolve_chat=True),
+            resolver,
+            default_private_chat_id="oc_private",
+        )
+
+        self.assertEqual(chat_id, "oc_private")
+        self.assertEqual(chat_source, "WORKBUDDY_HOME_CHANNEL_CHAT_ID")
+        self.assertEqual(sender_info, {})
+        self.assertEqual(send_meta["source_resolution"]["error"], "missing_resolved_chat_id")
+        self.assertIsNone(error)
+
+    def test_unresolved_source_falls_back_to_current_env_chat_without_private(self):
+        def resolver(query, window_minutes):
+            return {
+                "unresolved": True,
+                "error": "no_match",
+                "matched_count": 0,
+                "search_strategy": "latest_query_mixed_15m",
+            }
+
+        chat_id, chat_source, sender_info, send_meta, error = self._select(
+            self._args(resolve_chat=True),
+            resolver,
+            env_chat_id="oc_env",
+        )
+
+        self.assertEqual(chat_id, "oc_env")
+        self.assertEqual(chat_source, "FEISHU_CURRENT_CHAT_ID")
+        self.assertEqual(send_meta["source_resolution"]["fallback"], "current_env_chat")
+        self.assertIsNone(error)
+
+    def test_unresolved_source_without_any_target_returns_missing_private_target(self):
+        def resolver(query, window_minutes):
+            return {
+                "unresolved": True,
+                "error": "no_match",
+                "matched_count": 0,
+                "search_strategy": "latest_query_mixed_15m",
+            }
+
+        chat_id, chat_source, sender_info, send_meta, error = self._select(
+            self._args(resolve_chat=True),
+            resolver,
+        )
+
+        self.assertIsNone(chat_id)
+        self.assertEqual(chat_source, "")
+        self.assertEqual(sender_info, {})
+        self.assertEqual(send_meta, {})
+        self.assertEqual(error["status"], "unresolved")
+        self.assertEqual(error["error"], "missing_private_target")
+        self.assertEqual(error["source_error"], "no_match")
+
+
+if __name__ == "__main__":
+    unittest.main()
