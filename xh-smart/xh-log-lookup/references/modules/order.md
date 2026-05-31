@@ -10,6 +10,8 @@
 
 ## 首查策略
 
+订单模块必须遵守主控的 SQL 条件下沉规则：先拼 `serviceName`、`level`、稳定日志锚点和标识符，再执行 CLS 查询。除非用户明确要求"订单原始日志"或"全部订单日志"，不得只查 `serviceName:"order"` 后再从返回结果中筛异常、WARN、成功或失败。
+
 | 用户提供 | 推荐首查语句 | 说明 |
 |---------|-------------|------|
 | 线程号：`traceId` | `traceId:"{value}"` | 值搜，全链路查询，不加 `serviceName` |
@@ -18,6 +20,17 @@
 | 合同号：`contractNo` | `serviceName:"order" AND message:"{value}"` | 值搜 |
 | 手机号：`mobilePhone，mobileNo` | 根据手机号定位 `cid`、`orderId`后再根据`cid`或者`orderId`来搜 | 找不到时扩大查询时间`now-7d,now`->`now-30d,now` |
 | 身份证号：`identityNo` | 根据身份证号定位 `cid`、`orderId`后再根据`cid`或者`orderId`来搜 | 找不到时扩大查询时间`now-7d,now`->`now-30d,now` |
+
+## 条件下沉示例
+
+| 用户意图 | 首查 SQL | 后续分析 |
+|---------|---------|---------|
+| 订单近半小时 ERROR | `serviceName:"order" AND level:"ERROR"` | 按完整性规则统计和归类错误来源 |
+| 订单近半小时 WARN | `serviceName:"order" AND level:"WARN"` | 按完整性规则统计和归类 WARN 来源 |
+| 下单成功 | `serviceName:"order" AND message:"[借款下单]下单请求结果为"` | 只在命中结果中解析返回对象 `success=true` |
+| 下单业务异常/系统异常 | `serviceName:"order" AND (message:"[借款下单]出现系统错误" OR message:"[借款下单]请求出现业务异常")` | 提取错误码、异常 message 和 traceId |
+| 指定订单号下单结果 | `serviceName:"order" AND message:"[借款下单]下单请求结果为" AND message:"{orderId}"` | 解析该订单返回对象和 traceId |
+| 订单原始日志 | `serviceName:"order"` | 仅当用户明确要求原始日志/全部日志时使用，不得据此做异常或成功统计 |
 
 ## 核心流程链路追踪模版
 
@@ -53,6 +66,8 @@
 ## 健康检查
 
 无具体标识符时，按 `Step 0→1→2→3→4`。**Step 0 是"异常告警"查询的必做步骤**，常规健康检查也建议先执行 Step 0 排除非 [借款下单] 类异常。**健康检查属于统计模式，所有 Step 必须按主控 `xh-log-lookup` 的统计完整性规则执行：WorkBuddy 优先加载完整结果；仅切换到本地 Chrome 备用路径时才使用 `cls_query.py --require-complete --use-local-chrome`。**
+
+健康检查每个 Step 都必须直接使用下表 SQL 查询，禁止先查 `serviceName:"order"` 再从返回日志里筛 Step0-3 的结果。Step2 的成功数可以在 `message:"[借款下单]下单请求结果为"` 命中结果内解析 `success=true`，但不能从裸订单日志样本里统计成功数。
 
 Step 0 使用 `level:"ERROR"` 通用查询，不依赖代码锚点，可直接执行。Step 1-3 的中文日志前缀（`[借款下单]下单请求为` 等）依赖代码，首次使用前必须用 `validate_query_anchors.py` 或 grep 本地代码确认锚点仍存在。
 
