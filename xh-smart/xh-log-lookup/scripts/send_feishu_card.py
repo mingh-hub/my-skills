@@ -52,6 +52,14 @@ DEFAULT_PRIVATE_CHAT_ENV_KEYS = (
 
 LEVEL_ICON = {"INFO": "\U0001f7e2", "WARN": "\U0001f7e1", "WARNING": "\U0001f7e1", "ERROR": "\U0001f534"}
 COLOR_MAP = {"red": "red", "yellow": "yellow", "green": "green", "blue": "blue"}
+CARD_DATA_SCHEMA = {
+    "summary_fields": "list[{label, value}]",
+    "call_chain": "list[{level?, time?, service?, content?}]",
+    "log_count": "int >= 0",
+    "table_data": "list[{headers: list, rows: list[list]}]",
+    "analysis": "string",
+}
+CARD_DATA_ALLOWED_KEYS = set(CARD_DATA_SCHEMA)
 
 MD_TABLE_RE = re.compile(
     r'(?:^|\n)'
@@ -81,6 +89,99 @@ def _first_env(keys):
         if value:
             return key, value
     return "", ""
+
+
+def _schema_error(message, unknown_keys=None, field_errors=None):
+    return {
+        "status": "error",
+        "error": "invalid_data_schema",
+        "unknown_keys": unknown_keys or [],
+        "field_errors": field_errors or [],
+        "message": message,
+        "expected_schema": CARD_DATA_SCHEMA,
+        "fallback": "plain_text",
+    }
+
+
+def _has_renderable_card_content(data):
+    return bool(
+        data.get("summary_fields")
+        or data.get("call_chain")
+        or data.get("table_data")
+        or data.get("analysis")
+    )
+
+
+def validate_card_data(data):
+    if not isinstance(data, dict):
+        return _schema_error("--data must be a JSON object")
+
+    unknown_keys = sorted(set(data) - CARD_DATA_ALLOWED_KEYS)
+    if unknown_keys:
+        return _schema_error(
+            "unsupported --data keys; use only the documented card schema",
+            unknown_keys=unknown_keys,
+        )
+
+    field_errors = []
+
+    summary_fields = data.get("summary_fields", [])
+    if not isinstance(summary_fields, list):
+        field_errors.append("summary_fields must be a list")
+    else:
+        for index, item in enumerate(summary_fields):
+            if not isinstance(item, dict):
+                field_errors.append(f"summary_fields[{index}] must be an object")
+                continue
+            missing = [key for key in ("label", "value") if key not in item]
+            if missing:
+                field_errors.append(
+                    f"summary_fields[{index}] missing keys: {', '.join(missing)}"
+                )
+
+    call_chain = data.get("call_chain", [])
+    if not isinstance(call_chain, list):
+        field_errors.append("call_chain must be a list")
+    else:
+        for index, item in enumerate(call_chain):
+            if not isinstance(item, dict):
+                field_errors.append(f"call_chain[{index}] must be an object")
+
+    log_count = data.get("log_count", len(call_chain) if isinstance(call_chain, list) else 0)
+    if not isinstance(log_count, int) or isinstance(log_count, bool):
+        field_errors.append("log_count must be an integer")
+    elif log_count < 0:
+        field_errors.append("log_count must be >= 0")
+
+    table_data = data.get("table_data", [])
+    if not isinstance(table_data, list):
+        field_errors.append("table_data must be a list")
+    else:
+        for index, table in enumerate(table_data):
+            if not isinstance(table, dict):
+                field_errors.append(f"table_data[{index}] must be an object")
+                continue
+            headers = table.get("headers")
+            rows = table.get("rows")
+            if not isinstance(headers, list):
+                field_errors.append(f"table_data[{index}].headers must be a list")
+            if not isinstance(rows, list) or any(not isinstance(row, list) for row in rows):
+                field_errors.append(f"table_data[{index}].rows must be a list of lists")
+
+    analysis = data.get("analysis", "")
+    if not isinstance(analysis, str):
+        field_errors.append("analysis must be a string")
+
+    if field_errors:
+        return _schema_error("invalid --data schema", field_errors=field_errors)
+
+    if log_count > 0 and not _has_renderable_card_content(data):
+        return _schema_error(
+            "log_count > 0 requires at least one renderable field: "
+            "summary_fields, call_chain, table_data, or analysis"
+        )
+
+    return None
 
 
 def _load_json_output(stdout, stderr, context):
@@ -734,6 +835,11 @@ def main():
         parsed = parse_cls_raw_text(args.raw_text)
         data.setdefault("call_chain", parsed["call_chain"])
         data.setdefault("log_count", parsed["log_count"])
+
+    schema_error = validate_card_data(data)
+    if schema_error:
+        print(json.dumps(schema_error, ensure_ascii=False), file=sys.stderr)
+        sys.exit(1)
 
     # 群聊自动 @：当 --resolve-chat 解析到 group 且有 sender_info 时自动生效
     should_at = args.at_sender or (

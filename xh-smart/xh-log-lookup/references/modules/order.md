@@ -8,9 +8,15 @@
 
 常见关联服务：`h5-loan`、`loki-webapp`、`datainquiry`、`cif`、`account`、`underwriter`、`magic`、`member`。
 
+## 意图边界
+
+- **下单链路异常**：用户说"下单异常"、"借款下单异常"、"下单失败"、"下单链路异常"、"下单成功/失败统计"时，默认只统计下单业务链路，主查询必须使用 `serviceName:"order"` 加 `[借款下单]` 稳定日志锚点。不得把 `order` 服务通用 ERROR/WARN、`order-batch` 或 `order-batch-timing` 异常直接汇总成下单异常。
+- **订单服务/订单组异常**：用户说"订单服务异常"、"订单组异常"、"客户订单组健康检查"、"`order-batch`"、"`order-batch-timing`"、"`mqResendJob`"、"服务健康"时，才按服务健康处理，可覆盖 `order`、`order-batch`、`order-batch-timing`，并按主控规则拆分 `ERROR/WARN` 和 `serviceName`。
+- **背景异常分区**：下单链路查询中如额外执行 `serviceName:"order" AND level:"ERROR"`，只能作为"订单服务背景异常"输出；`mqResendJob`、batch/timing 异常默认归为"订单组服务异常"。只有 traceId、orderId 或明确业务证据证明与本次下单链路相关时，才纳入下单链路结论。
+
 ## 首查策略
 
-订单模块必须遵守主控的 SQL 条件下沉规则：先拼 `serviceName`、`level`、稳定日志锚点和标识符，再执行 CLS 查询。除非用户明确要求"订单原始日志"或"全部订单日志"，不得只查 `serviceName:"order"` 后再从返回结果中筛异常、WARN、成功或失败。
+订单模块必须遵守主控的 SQL 条件下沉规则：先判断是"下单链路查询"还是"订单服务健康查询"，再拼 `serviceName`、`level`、稳定日志锚点和标识符执行 CLS 查询。除非用户明确要求"订单原始日志"、"全部订单日志"、"订单服务异常"或"订单组健康"，不得只查 `serviceName:"order"` 后再从返回结果中筛异常、WARN、成功或失败。
 
 | 用户提供 | 推荐首查语句 | 说明 |
 |---------|-------------|------|
@@ -25,8 +31,12 @@
 
 | 用户意图 | 首查 SQL | 后续分析 |
 |---------|---------|---------|
-| 订单近半小时 ERROR | `serviceName:"order" AND level:"ERROR"` | 按完整性规则统计和归类错误来源 |
-| 订单近半小时 WARN | `serviceName:"order" AND level:"WARN"` | 按完整性规则统计和归类 WARN 来源 |
+| 下单异常 | `serviceName:"order" AND (message:"[借款下单]出现系统错误" OR message:"[借款下单]请求出现业务异常")` | 只统计命中下单异常锚点的日志，提取错误码、异常 message 和 traceId |
+| 下单近半小时 ERROR | `serviceName:"order" AND level:"ERROR" AND (message:"[借款下单]出现系统错误" OR message:"[借款下单]请求出现业务异常")` | 按用户指定级别收窄下单异常锚点；不得退化为裸 `serviceName:"order" AND level:"ERROR"` |
+| 下单近半小时 WARN | `serviceName:"order" AND level:"WARN" AND (message:"[借款下单]出现并发请求" OR message:"[借款下单]请求参数有误" OR message:"[借款反欺诈]反欺诈服务调用异常")` | 仅统计下单链路相关 WARN；锚点变更时先按代码校验或补充稳定前缀 |
+| 订单服务近半小时 ERROR | `serviceName:"order" AND level:"ERROR"` | 仅用于订单服务背景异常；不得作为下单异常主结论 |
+| 订单服务近半小时 WARN | `serviceName:"order" AND level:"WARN"` | 仅用于订单服务背景 WARN；不得作为下单链路统计 |
+| 订单组健康/订单组异常 | 分别查询 `serviceName:"order"`、`serviceName:"order-batch"`、`serviceName:"order-batch-timing"` 并拆分 `level:"ERROR"` / `level:"WARN"` | 按服务健康输出，`mqResendJob` 等 batch/timing 异常归为订单组服务异常 |
 | 下单成功 | `serviceName:"order" AND message:"[借款下单]下单请求结果为"` | 只在命中结果中解析返回对象 `success=true` |
 | 下单业务异常/系统异常 | `serviceName:"order" AND (message:"[借款下单]出现系统错误" OR message:"[借款下单]请求出现业务异常")` | 提取错误码、异常 message 和 traceId |
 | 指定订单号下单结果 | `serviceName:"order" AND message:"[借款下单]下单请求结果为" AND message:"{orderId}"` | 解析该订单返回对象和 traceId |
@@ -65,23 +75,23 @@
 
 ## 健康检查
 
-无具体标识符时，按 `Step 0→1→2→3→4`。**Step 0 是"异常告警"查询的必做步骤**，常规健康检查也建议先执行 Step 0 排除非 [借款下单] 类异常。**健康检查属于统计模式，所有 Step 必须按主控 `xh-log-lookup` 的统计完整性规则执行：WorkBuddy 优先加载完整结果；仅切换到本地 Chrome 备用路径时才使用 `cls_query.py --require-complete --use-local-chrome`。**
+无具体标识符时，先判断用户目标：**下单链路健康检查**主线是 `Step 1→2→3→4`；**订单服务/订单组健康检查**才按服务健康范围执行。`Step 0` 是订单服务通用 ERROR 背景检查，只能用于发现非 [借款下单] 类背景异常或补充风险，不得作为下单异常主统计。**健康检查属于统计模式，所有 Step 必须按主控 `xh-log-lookup` 的统计完整性规则执行：WorkBuddy 优先加载完整结果；仅切换到本地 Chrome 备用路径时才使用 `cls_query.py --require-complete --use-local-chrome`。**
 
 健康检查每个 Step 都必须直接使用下表 SQL 查询，禁止先查 `serviceName:"order"` 再从返回日志里筛 Step0-3 的结果。Step2 的成功数可以在 `message:"[借款下单]下单请求结果为"` 命中结果内解析 `success=true`，但不能从裸订单日志样本里统计成功数。
 
-当"下单异常/订单异常"同时关注 `ERROR` 和 `WARN` 时，必须先执行 `level:"ERROR"` 查询，再执行 `level:"WARN"` 查询，禁止用 `(level:"ERROR" OR level:"WARN")` 的合并样本直接判断分布。如果覆盖 `order`、`order-batch`、`order-batch-timing` 后任一合并查询 `has_more=true` 或不完整，必须继续逐服务拆分。`mqResendJob` 等 `order-batch-timing` 异常归为订单组服务异常；如果用户明确说"下单链路异常"，核心优先查 `order`，再按 traceId 或证据扩展到关联服务。
+当"下单链路异常"同时关注 `ERROR` 和 `WARN` 时，必须在下单业务锚点内分别执行 `level:"ERROR"` 和 `level:"WARN"` 查询，禁止用裸 `serviceName:"order" AND level:"ERROR"` 替代下单异常查询。当"订单服务异常/订单组异常"同时关注 `ERROR` 和 `WARN` 时，必须先执行 `level:"ERROR"` 查询，再执行 `level:"WARN"` 查询，禁止用 `(level:"ERROR" OR level:"WARN")` 的合并样本直接判断分布。如果覆盖 `order`、`order-batch`、`order-batch-timing` 后任一合并查询 `has_more=true` 或不完整，必须继续逐服务拆分。
 
-Step 0 使用 `level:"ERROR"` 通用查询，不依赖代码锚点，可直接执行。Step 1-3 的中文日志前缀（`[借款下单]下单请求为` 等）依赖代码，首次使用前必须用 `validate_query_anchors.py` 或 grep 本地代码确认锚点仍存在。
+Step 0 使用 `level:"ERROR"` 通用查询，不依赖代码锚点，可直接执行，但输出必须标注为"订单服务背景异常"。Step 1-3 的中文日志前缀（`[借款下单]下单请求为` 等）依赖代码，首次使用前必须用 `validate_query_anchors.py` 或 grep 本地代码确认锚点仍存在。
 
 | Step | 查询sql | 说明 |
 |------|------|------|
-| `Step0`：异常告警总览 | `serviceName:"order" AND level:"ERROR"` | 不依赖代码锚点，通用查询，排除非下单类异常 |
+| `Step0`：订单服务背景异常 | `serviceName:"order" AND level:"ERROR"` | 不依赖代码锚点，通用查询，只能作为背景风险提示，不能作为下单异常主结论 |
 | `Step1`：入口量 | `serviceName:"order" AND message:"[借款下单]下单请求为"` | 中文查询，需要浏览器注入 |
 | `Step2`：结果状态 | `serviceName:"order" AND message:"[借款下单]下单请求结果为"` | 中文查询，需要浏览器注入 |
 | `Step3`：下单异常 | `serviceName:"order" AND (message:"[借款下单]出现系统错误" OR message:"[借款下单]请求出现业务异常")` | 包含`业务异常`和`系统异常`，中文查询，需要浏览器注入 |
-| `Step4`：钻取 | `traceId:"{提取到的hex值}"` | 从 Step 0/3 中提取异常 traceId 展开分析 |
+| `Step4`：钻取 | `traceId:"{提取到的hex值}"` | 下单链路异常从 Step3 提取 traceId 展开；Step0 背景异常只有确认与本次下单链路相关时才钻取 |
 
-输出统计：请求总数、成功数、成功金额、业务异常、系统异常、渠道分布、异常 traceId。
+输出统计必须分区：`下单链路异常`、`订单服务背景异常`、`订单组/batch 异常`。下单链路主统计输出请求总数、成功数、成功金额、业务异常、系统异常、渠道分布、异常 traceId；禁止把订单服务背景异常或订单组/batch 异常汇总成下单异常。
 
 ## References
 
