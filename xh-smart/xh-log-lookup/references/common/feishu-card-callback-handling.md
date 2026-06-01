@@ -29,7 +29,7 @@
    - **`query_full_trace`**：搜索 `traceId:"<trace_id>"`（不限 serviceName，跨服务全链路），时间范围使用原始卡片的时间范围
    - **`expand_time_range`**：解析 `current_time_range`（如 `now-5m,now`），**前后各增加 1 天**（如 `now-5m,now` → `now-1d-5m,now+1d`）。如果计算后结束时间 > 当前时间，截止到 `now`。使用 `original_query` 搜索并输出新结论
    - **`query_errors_only`**：搜索 `traceId:"<trace_id>" AND level:"ERROR"`，仅返回错误日志结论
-3. **输出结果**：当前主流程优先发送互动卡片到原始聊天；发送失败、来源缺失或来源歧义时降级为飞书兼容文本结论
+3. **输出结果**：当前主流程优先发送互动卡片到原始聊天；发送成功后静默或只做极短确认；发送失败、来源缺失或候选详情获取失败时降级为飞书兼容文本结论
 
 ## 中文自动转码
 

@@ -21,11 +21,12 @@ disable: false
 这张表是客户订单组负责的日志服务清单。`serviceName` 列用于 CLS 查询范围，`别名`列用于把用户自然语言服务名映射到一组 `serviceName`，`项目名`列只用于定位本地源码仓库；三者不要混用。
 
 服务范围识别按以下优先级执行：
+- **业务链路查询优先于服务别名扩范围**：先判断用户是否在问具体业务链路，再决定服务范围。用户说"下单异常"、"借款下单异常"、"下单成功/失败"、"下单链路异常"、"拦截"时，默认是下单业务链路查询，必须走 `references/modules/order.md` 的下单锚点，不得因为"订单"二字自动扩成 `order/order-batch/order-batch-timing` 服务组。
 - 用户明确说出具体 `serviceName`（如 `order`、`protocol-batch`）时，只查该单个服务。
-- 用户说出表中某个`别名`时，查所有同别名行对应的 `serviceName`。`别名`列可填写多个自然语言别名，使用中文逗号 `，` 或英文逗号 `,` 分隔。
+- 用户说出表中某个`别名`且是在问整体日志、服务异常、服务健康或服务组情况时，查所有同别名行对应的 `serviceName`。`别名`列可填写多个自然语言别名，使用中文逗号 `，` 或英文逗号 `,` 分隔。
 - 用户说"我们组"、"客户订单组"、"这批服务"或没有指定具体服务但要求查看本组日志情况时，默认以本表 `serviceName` 列的全部服务作为查询覆盖范围。
 
-同一个`别名`可对应多个 `serviceName`，同一个 `serviceName` 也可以挂多个别名。例如"订单服务异常"要展开到表中所有包含`订单服务`或`订单`别名的服务后再查询和分析。
+同一个`别名`可对应多个 `serviceName`，同一个 `serviceName` 也可以挂多个别名。例如"订单服务异常"要展开到表中所有包含`订单服务`或`订单`别名的服务后再查询和分析；但"下单异常"属于业务链路查询，不能按"订单"别名扩成订单服务组。
 
 `仓库路径`列是本地缓存，不是跨机器固定路径。路径为空或失效时，先执行 `scripts/resolve_workspace.py --check` 诊断；确认无误后再执行 `scripts/resolve_workspace.py` 更新映射表。
 
@@ -51,12 +52,12 @@ disable: false
 
 ## 强制规则
 
-### 触发门禁
+### 触发前提与来源约束
 
-- 群聊中只有明确 `@Tom` 或 WorkBuddy/Claw 已判定为对 Tom 的直接提及时，才触发日志查询和飞书卡片发送。
-- 群聊消息未 `@Tom` 时，立即停止；不要查询 CLS、不要读取本地代码、不要发送飞书卡片，也不要输出诊断结论。
+- 本技能只处理已由 WorkBuddy/Claw 触发的请求：私聊 Tom，或群聊中明确 `@Tom` / 被判定为对 Tom 的直接提及。
+- 如果运行上下文显示这是群聊消息且未直接提及 Tom，应立即停止；不要查询 CLS、不要读取本地代码、不要发送飞书卡片，也不要输出诊断结论。
 - 私聊 Tom 时不需要 `@Tom`，直接按本技能流程处理，并优先把飞书卡片发送回该私聊会话。
-- 触发后，发送目标必须是当前提问来源；无法确认来源或卡片发送失败时，只能在当前会话输出纯文本 fallback。
+- 触发后，发送目标优先是当前提问来源；无法确认来源时，若已配置 WorkBuddy 默认私聊目标则发送到该私聊，否则才允许在当前会话输出纯文本 fallback。
 
 ### 数据统计强制约束
 
@@ -69,31 +70,33 @@ disable: false
 
 健康检查（见业务模块 reference 的 Step 0-4）**始终**属于统计模式。
 
-#### 统计模式完整性铁律
+#### 统计模式分档规则
 
-1. **完整性优先，API 优先**：统计模式下必须拿到完整数据后才能做数值结论。先用 `scripts/cls_query.py --method auto` 走 CLS HTTP API；API 明确完整时可直接统计。API 返回 `is_complete=false`、`error=INCOMPLETE_DATA` 或 `source=api_failed` 时，降级到 WorkBuddy 内置浏览器打开完整 CLS URL、加载全部结果并校验完整性。
+1. **先探测，再决定统计口径**：统计模式先执行 `scripts/cls_query.py --method auto --api-limit 500`，读取 `log_count`、`loaded_count`、`is_complete`、`has_more` 和 `fallback_method`。禁止在未说明完整性状态时输出统计结论。
 
-2. **本地 Chrome 备用路径才用 `--require-complete`**：只有明确切换到本地 Chrome 备用路径并调用 `cls_query.py` 执行/提取时，才必须加 `--require-complete`。无此标志的 `cls_query.py` 执行结果禁止用于任何数值统计。
+2. **小数据默认精确统计**：`is_complete=true` 或 `log_count <= 500` 时，默认输出精确统计。若 API 未完整但 `log_count <= 500`，继续用 WorkBuddy 完整加载或拆分查询补齐后再输出精确数值。
 
-3. **完整性关卡**：先检查结果是否完整；如果 `cls_query.py` 返回 JSON，检查是否存在 `"error": "INCOMPLETE_DATA"`。若存在：
-   - 禁止对已加载数据做任何计数、汇总、占比计算
-   - 必须按 `suggested_actions` 拆分查询后重试
-   - 拆分后仍不完整：飞书兼容文本结论必须在"风险提示:"字段标注"数据不完整/采样值"，所有数值结论加"（采样值，非精确统计）"后缀
+3. **中等数据按用户意图选择**：`500 < log_count <= 1000` 时，用户要求"总数"、"成功率"、"占比"、"准确数量"、"精确统计"等精确口径，必须走完整加载、`--require-complete` 或拆分查询；用户只要求"健康检查"、"趋势"、"分布"、"整体异常情况"时，允许采样统计。
 
-4. **禁止跳过关卡**：只要 `is_complete` 为 false，统计模式下所有百分比、总数、成功率结论都无效。不存在"先看看数据再说"——要么数据完整，要么先拆分。
+4. **大数据默认采样统计**：`log_count > 1000`、`has_more=true` 且无法低成本补齐、或完整性未知时，默认转为采样统计。若用户明确要求精确统计，必须拆分时间/服务/level 查询，或请用户缩小范围。
+
+5. **采样统计输出契约**：采样统计必须在结论或风险提示中明确写"采样统计，非精确统计"；所有数字只能以"样本 N 条中..."表述。禁止输出未限定样本口径的全量总数、全量占比、全量成功率或平均值。
+
+6. **精确统计失败处理**：精确路径返回 `error=INCOMPLETE_DATA` 时，按 `suggested_actions` 拆分查询后重试；仍无法完整时，不输出精确数值，只输出当前阻塞原因、已加载样本范围和下一步建议。
+
+7. **多类别 OR 查询拆分优先**：当查询同时包含多个互斥类别，且 `has_more=true`、`is_complete=false`、`loaded_count >= api-limit` 或完整性未知时，禁止直接基于合并查询样本输出分类结论。互斥类别包括多个 `level`、多个 `serviceName`、多个业务锚点。拆分优先级固定为：先按 `level` 拆分，尤其 `ERROR` 和 `WARN` 必须分开查；再按 `serviceName` 拆分；最后按业务锚点或时间窗口拆分。
+
+8. **异常/健康检查默认拆查顺序**：当用户关注异常、告警、健康检查或其他可能混入多种级别的场景时，默认先单查 `level:"ERROR"`，再单查 `level:"WARN"`。如果任一子查询仍 `has_more=true` 或 `is_complete=false`，继续按服务拆分后再分析；禁止把合并 OR 查询的 500 条样本当作 `ERROR` / `WARN` 全量分布。
 
 #### 统计模式工作流
 
 ```
-用户请求 → 识别统计关键词 → cls_query.py --method auto --require-complete
-  → source=api 且 is_complete=true → 输出精确统计
-  → API 不完整/失败 → WorkBuddy 内置浏览器打开 cls_url → 加载更多直到完整
-  → WorkBuddy 不可用/页面操作失败/需要批量自动提取
-    → 切换本地 Chrome 备用路径：cls_query.py --method local-chrome --require-complete
-      → is_complete=true → 正常分析，输出精确统计
-      → error=INCOMPLETE_DATA → 按 suggested_actions 拆分
-        → 每段都 --require-complete → 合并完整段数据 → 输出统计
-        → 某段仍不完整 → 飞书兼容文本风险提示 + "采样值" 标注
+用户请求 → 识别统计关键词 → cls_query.py --method auto --api-limit 500
+  → is_complete=true 或 log_count<=500 → 精确统计；API 不完整时先补齐/拆分
+  → 500<log_count<=1000 → 按用户意图选择精确或采样
+  → log_count>1000 / has_more=true / 完整性未知 → 默认采样统计
+  → 用户明确要求精确 → WorkBuddy 完整加载或 local-chrome --require-complete
+    → 仍不完整 → 先按 level 拆分，再按 serviceName 拆分，再按时间/业务锚点拆分；无法完整时只说明阻塞与建议
 ```
 
 #### 非统计模式
@@ -103,7 +106,7 @@ disable: false
 ### 查询方法
 - **查询前置条件（强制）**：
   - **用户提供了 traceId**：可以直接到日志平台用 `traceId:"{value}"` 查询
-  - **用户未提供 traceId**：**必须先分析本地业务代码**，理解业务流程和日志打印逻辑后，再构造查询到日志平台查询。禁止以任何理由（包括路径不匹配、嫌麻烦等）跳过本地业务分析
+  - **用户未提供 traceId**：单笔根因分析、业务入口不明确、推荐锚点不可用时，必须先分析本地业务代码，理解业务流程和日志打印逻辑后再构造查询。统计/健康检查可先按模块 reference 和服务范围查询，再按需要做锚点校验
 - **环境默认规则**：用户未指定环境时，**必须查生产环境（prod）**。只有用户明确说"查测试环境"时才使用测试 topic。禁止自行假设或优先查测试环境。
 - **traceId 查询与提取**：
   - **用户提供 traceId**：直接执行 `traceId:"{value}"`（不加 `serviceName`）；查不到时扩大时间：`now-1d,now` → `now-7d,now` → `now-30d,now`
@@ -119,6 +122,25 @@ disable: false
 - **分页未加载完** — CLS 每页只显示 20 条，`load_more_clicks` 是否足够？检查 `log_count` 字段
 - 日志平台查询常用 key 见下文"查询语法与字段"段。
 
+### SQL 条件下沉强制约束
+
+执行 CLS 查询前，必须先把可确定条件拼进查询 SQL，再执行查询、加载和分析。除非用户明确要求"原始日志"、"全部日志"或"随机采样"，禁止先查裸服务范围（如 `serviceName:"order"`）再从返回样本中筛 `ERROR`、`WARN`、成功、失败或业务异常。
+
+SQL 构造顺序：
+1. 解析环境、时间范围、标识符、业务意图、日志级别和服务范围；业务意图必须先于服务别名扩范围确认。
+2. 用户提供 `traceId` 时，直接执行 `traceId:"{value}"`，不额外拼 `serviceName`。
+3. 用户明确日志级别或异常意图时，必须拼入 `level:"ERROR"`、`level:"WARN"` 等条件；例如"订单服务近半小时 ERROR"应查询 `serviceName:"order" AND level:"ERROR"`，"下单近半小时 ERROR"仍必须同时拼入下单业务锚点。
+4. 用户描述业务链路场景时，必须先拼入该业务模块的稳定日志锚点；例如"查下单异常"应优先查询下单异常锚点，不能只查 `serviceName:"order" AND level:"ERROR"` 后把通用订单服务错误当作下单异常。
+5. 用户描述业务场景但 SQL 条件不明确时，先按业务路由只读取对应模块 reference 的推荐查询和日志锚点；不要无差别扫描所有模块。
+6. reference 中存在推荐锚点时，先校验 `方法入口`、`serviceName` 和固定 `message:"..."` 片段；校验通过后把稳定日志前缀拼入 SQL。
+7. reference 锚点缺失、过期或不匹配时，再按服务映射表定位本地仓库，搜索业务代码中的日志打印语句，优先提取稳定日志前缀拼成 `message:"固定日志前缀"`。
+8. 仍找不到稳定锚点时，才允许使用较宽 SQL 兜底；结论中必须写明"未找到稳定日志锚点，使用保守查询"，并标注完整性和采样风险。
+
+可在日志返回后做内存解析的范围仅限：
+- 解析已由 SQL 缩小后的返回对象字段，例如下单结果里的 `success=true`。
+- 处理 CLS 难以可靠表达的中文、JSON 内部字段或复杂结构字段。
+- 对已命中的日志做验证、归类和证据提取。
+
 ### 推荐查询锚点校验
 
 各业务模块 reference 的`流程追踪入口`：`场景 | 方法入口 | 日志锚点/关键词 | 推荐查询 | 关键指标 | 说明`。
@@ -126,7 +148,7 @@ disable: false
 - `方法入口` 存在且 `serviceName` 与源码项目匹配、固定 `message:\"...\"` 片段仍在该入口类/方法附近命中时，才把推荐查询作为 Phase A 主查询。
 - 方法存在但固定 message 不匹配时，不要把旧模板当主路径；改用 `serviceName:\"{服务}\" AND message:\"{标识符}\"`，并 grep 当前代码找新日志前缀。
 - 方法不存在、源码缺失或服务不匹配时，标记模板疑似过期；先按 traceId/标识符值搜，再回代码确认入口。
-- 推荐查询 0 命中时，继续扩大时间做值搜，如果能搜到日志，说明`sql`没问题，在目标查询时间段没有命中；当扩大到当前时间前一个月还没日志信息时，停止搜索，去本地项目内
+- 推荐查询 0 命中时，继续扩大时间做值搜；如果能搜到日志，说明查询语法可用但目标时间段无命中；扩大到当前时间前一个月仍无日志时，停止扩大时间，回本地项目确认日志是否已下线、模板是否过期或入口是否变更。
  
 ### 日志查询无结果排查清单
 
@@ -140,7 +162,7 @@ disable: false
 ### API、内置浏览器和本地浏览器优先级
 
 - 优先用 `scripts/cls_query.py --method auto`。默认先请求 CLS 内部 HTTP API，不需要浏览器、不需要 `secret_id/secret_key`，查询中可直接包含中文。
-- API 返回 `source=api_failed` 或 `is_complete=false` 时，使用输出中的 `cls_url` 交给 WorkBuddy 内置浏览器打开。URL 必须包含 `topic_id`、`time`、`queryBase64`，避免依赖页面默认状态。
+- API 返回 `source=api_failed` 或 `is_complete=false` 时，按统计分档规则或非统计完整性风险决定下一步；需要页面 fallback 时，使用输出中的 `cls_url` 交给 WorkBuddy 内置浏览器打开。URL 必须包含 `topic_id`、`time`、`queryBase64`，避免依赖页面默认状态。
 - 本地 Chrome + AppleScript 是最后备用路径：当 WorkBuddy 登录态不可用、页面操作失败、需要脚本自动加载更多或批量全文提取时，显式使用 `scripts/cls_query.py --method local-chrome --use-local-chrome`。
 - 使用本地 Chrome 备用路径时，禁止默认操作 `active tab of front window`。首次查询创建新的 Chrome window，后续查询复用该窗口，通过 window id 定向操作；调查结束后调用 `scripts/cls_query.py --close` 关闭窗口。
 - 不要用 `document.body.innerText.substring(0,N)` 判断结果；CLS 日志数据在页面文本后部。
@@ -149,87 +171,67 @@ disable: false
 
 ### 结论输出规则
 
-- 诊断结论必须先调用 `scripts/send_feishu_card.py` 发送飞书交互式卡片到当前提问来源；发送脚本返回非 0 时，才降级为当前会话纯文本 fallback。禁止在未调用发送脚本前直接输出最终文本结论。
+- 诊断结论必须先调用 `scripts/send_feishu_card.py --quiet-success` 发送飞书交互式卡片到当前提问来源；发送脚本退出码为 0 时，当前会话不得再输出诊断结论、摘要、证据、CLS 链接或卡片内容。发送脚本返回非 0 时，才降级为当前会话纯文本 fallback。禁止在未调用发送脚本前直接输出最终文本结论。
 - 飞书卡片消息格式：
   - 可以使用卡片 native table、lark_md、代码块、链接和按钮。
   - 群聊卡片可在正文中 @ 提问者；私聊场景不需要 @。
   - CLS 链接必须包含 `topic_id`、`time`、`queryBase64`；当结果集中在单线程时，URL 只带 `traceId` 即可。
+- `send_feishu_card.py --data` schema 强制契约：
+  - 顶层只允许 `summary_fields`、`call_chain`、`log_count`、`table_data`、`analysis`。
+  - `summary_fields` 必须是 `[{label, value}]`；`call_chain` 必须是非空日志对象列表；`log_count` 必须是 `>=0` 的整数；`table_data` 必须是 `[{headers: list, rows: list[list]}]`；`analysis` 必须是字符串。
+  - 禁止凭直觉构造 `summary`、`time_range`、`total_logs`、`error_breakdown`、`root_cause` 等自由字段；脚本会以 `invalid_data_schema` 拒绝发送。
+  - `call_chain` 内部字段是自适应渲染，不强制白名单。推荐传 `level/time/service/content`；直接传 CLS 常见字段 `timestamp/serviceName/message/traceId` 也可以，脚本会识别 `timestamp` 为时间、`serviceName` 为服务、`message` 为正文，并把 `traceId` 等未识别字段追加成 `key=value` 展示。
+  - `log_count > 0` 时，必须至少提供 `summary_fields`、`call_chain`、`table_data` 或 `analysis` 中的一种可渲染内容；只有 `log_count == 0` 且无内容时才允许渲染"无匹配日志"。
+  - 该 schema 是飞书卡片渲染契约，不是统计专用 schema。单线程/非统计查询可用 `call_chain` 表达链路日志，用 `analysis` 表达根因结论，用 `summary_fields` 放 `traceId`、`orderId`、结论等摘要；只要使用这五个顶层 key，就不会因为不是统计结果而被拦截。
 - 纯文本 fallback 格式契约：
   - 允许：普通文本、换行、简单分段、短横线列表、数字编号、粗体标签、普通 URL 或 `[文本](URL)` 链接、@。
   - 禁止：Markdown 表格、表格分隔线、代码块、HTML 表格、复杂嵌套列表、飞书卡片语法。
   - 输出前必须自检：如果最终回复中出现 `| 时间 | 服务 | 事件 |`、`|---|---|`、`|-----|-----|`、任意以 `|` 开头且包含多个 `|` 分隔列的行，必须改写成逐行列表；如果出现 fenced code block，必须改写成普通文本。
-- 每次结论须包含：查了什么代码/日志前缀、CLS 查询语句/topic/时间范围、命中摘要与未命中证据、完整性状态（`loaded_count` vs `log_count`）、关键节点时间（`timestamp` 格式）、CLS URL 链接、卡片发送状态。
+- 飞书卡片内容或纯文本 fallback 须包含：查了什么代码/日志前缀、CLS 查询语句/topic/时间范围、命中摘要与未命中证据、完整性状态（`loaded_count` vs `log_count`）、关键节点时间（`timestamp` 格式）、CLS URL 链接、卡片发送状态。
 
 ### 来源识别与飞书卡片发送
 
 技能被触发后，在输出最终结论前执行以下流程：
 
-1. **必须先调用发送脚本**：最终结论生成后，先执行 `send_feishu_card.py`。不要先输出普通文本结论；只有发送脚本返回非 0 或明确失败状态时，才输出纯文本 fallback。
+1. **必须先调用发送脚本**：最终结论生成后，先执行 `send_feishu_card.py --quiet-success`。不要先输出普通文本结论；只有发送脚本返回非 0 或明确失败状态时，才输出纯文本 fallback。
 
-2. **来源优先级**：`--chat` 是人工显式指定目标，优先级最高。WorkBuddy 正常路径必须使用 `--resolve-chat --query "{用户原始问题}"`，并以精确反查得到的唯一 `chat_id` 作为发送目标。`FEISHU_CURRENT_CHAT_ID` / `AGENT_CURRENT_CHAT_ID` 等环境变量只作为未传 `--resolve-chat` 时的兼容路径，不能覆盖或短路精确反查结果。
+2. **来源优先级**：`--chat` 是人工显式指定目标，优先级最高。WorkBuddy 正常路径必须使用 `--resolve-chat --source-query "{用户原始问题}"`，并以来源反查选定的 `chat_id` 作为发送目标。`WORKBUDDY_HOME_CHANNEL_CHAT_ID` 只在来源反查失败时兜底；`FEISHU_CURRENT_CHAT_ID` / `AGENT_CURRENT_CHAT_ID` 等环境变量只作为更低优先级兼容路径，不能覆盖或短路成功反查结果。
 
-3. **反查来源**：`--resolve-chat` 必须用用户原始问题文本精确搜索最近时间窗内的群聊 @Bot 消息和私聊 p2p 消息。`{用户原始问题}` 使用触发 Tom 的原始问题正文；群聊去掉 `@Tom` 和首尾空白，私聊直接使用用户输入正文；不要改写、总结或替换成分析后的标题。
+3. **反查来源**：`--resolve-chat` 使用 `send_feishu_card.py` 的当前实现为准：用 `--source-query` 里的用户原始问题精确搜索最近 15 分钟内的群聊 @Bot 消息和私聊 p2p 消息。`--source-query` 必须来自触发技能的原始消息；群聊命中只依赖 `--chat-type group + --at-chatter-ids BOT_OPEN_ID`，不再额外加 `--sender-type user`，避免飞书索引延迟；群聊文本可去掉 `@Tom` 和首尾空白，私聊直接使用用户输入正文；禁止传分析摘要、关键切片、卡片标题或改写后的问题。
+4. **WorkBuddy 直问兜底**：如果 `--resolve-chat` 未反查到可用来源，但已配置 `WORKBUDDY_HOME_CHANNEL_CHAT_ID`，则将卡片发送到该 home channel 私聊；只有该目标也不存在时，才降级为纯文本 fallback。
 
-   群聊来源搜索：
-   ```bash
-   LARK_CLI_NO_PROXY=1 lark-cli im +messages-search \
-     --as user \
-     --query "{用户问题文本}" \
-     --chat-type group \
-     --sender-type user \
-     --at-chatter-ids "ou_ae0341a3578d833a22b5f2927b103988" \
-     --start "{当前时间 - 15 分钟}" \
-     --page-limit 1 \
-     --format json
-   ```
-
-   私聊来源搜索：
-   ```bash
-   LARK_CLI_NO_PROXY=1 lark-cli im +messages-search \
-     --as user \
-     --query "{用户问题文本}" \
-     --chat-type p2p \
-     --sender-type user \
-     --start "{当前时间 - 15 分钟}" \
-     --page-limit 1 \
-     --format json
-   ```
-
-4. **获取详情**：用 Bot 身份获取消息详情（含 chat_id、sender）。
-   ```bash
-   LARK_CLI_NO_PROXY=1 lark-cli im +messages-mget \
-     --message-ids "{message_id}" \
-     --as bot
-   ```
-
-5. **解析结果**：提取 `chat_id`、`chat_type`、`sender.open_id`。
-   - 群聊和私聊合并后命中 0 条 → 搜不到来源，fallback 为当前会话纯文本
-   - 群聊和私聊合并后命中 1 条，且 `messages-mget` 返回的 `chat_type` 与搜索分支一致 → 唯一匹配，发卡片到该 chat_id
-   - 群聊和私聊合并后命中 ≥2 条 → 来源不唯一，不发卡片，fallback 当前会话纯文本，并说明最近 15 分钟窗口内同 query 多命中
-   - 搜索分支与 `messages-mget` 的 `chat_type` 不一致 → 来源异常，不发卡片，fallback 当前会话纯文本
+5. **当前脚本行为**：
+   - 单一来源命中 0 条 → 搜不到来源；若配置了 `WORKBUDDY_HOME_CHANNEL_CHAT_ID`，发送到该 home channel 私聊，否则 fallback 为当前会话纯文本。
+   - 单一来源或跨来源多命中 → 以 `create_time` 最新的一条作为发送目标。
+   - `messages-mget` 返回的 `chat_type` 缺失或异常时，当前脚本按搜索分支兜底为 `group` 或 `p2p`。
+   - 群聊解析到 sender 时会自动 @ 提问者；显式 `--at-sender` 仍可传入，但不是唯一 @ 条件。
 
 6. **发送卡片**：
    ```bash
    python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py \
-     --resolve-chat --query "{用户原始问题}" \
+     --resolve-chat --source-query "{用户原始问题}" \
      --resolve-window-minutes 15 \
+     --debug-log-dir "/private/tmp/xh-log-lookup-route" \
      --at-sender \
+     --quiet-success \
      --title "..." --color "..." --data "..."
    ```
-   - 正常路径必须保留 `--resolve-chat --query`；只要传入 `--resolve-chat`，脚本就必须使用原始问题 + 时间窗精确反查群聊和私聊来源，环境变量不得短路发送目标
-   - `--at-sender` 只在能拿到 sender 且 `chat_type=group` 时生效；私聊不会 @
+   - 正常路径必须保留 `--resolve-chat --source-query`；只要传入 `--resolve-chat`，脚本就必须使用原始问题 + 时间窗反查群聊和私聊来源，并在多命中时选择最新消息，环境变量不得短路发送目标
+   - 建议保留 `--debug-log-dir "/private/tmp/xh-log-lookup-route"`；当卡片 fallback 到 home channel 时，优先查看审计 JSON 中的 `fallback`、`searches`、`mget` 和 `selection` 定位反查失败原因
+   - `--data` 是卡片内容，允许 `{}` 表示无结果卡片；它不参与来源反查，也不能替代 `--source-query`
    - 需要人工指定目标时可传 `--chat "{chat_id}"`
-   - 发送脚本返回 `status: "sent"` → 不再输出重复纯文本结论
-   - 发送脚本非 0、`status: "unresolved"` 或 `status: "ambiguous"` → 当前会话输出飞书兼容纯文本结论，并说明卡片失败原因
-   - 如果环境变量 chat_id 与精确反查 chat_id 不一致，发送脚本仍使用精确反查结果，并在状态中记录 `env_chat_conflict`
-   - 最近 15 分钟窗口外的历史相同问题不算多命中；窗口内群聊/私聊合计多条相同 query 才算来源歧义
+   - 发送脚本退出码为 0 → 视为卡片已发送，当前会话不得再输出诊断结论、摘要、证据、CLS 链接或卡片内容
+   - 如果 WorkBuddy/Hermes 宿主强制要求非空最终回复，只输出 `已发送飞书卡片。`，不得附加任何诊断细节
+   - 发送脚本非 0 或 `status: "unresolved"` → 当前会话输出飞书兼容纯文本结论，并说明卡片失败原因；如果 `error=missing_private_target`，提示配置 `WORKBUDDY_HOME_CHANNEL_CHAT_ID`
+   - 如果环境变量 chat_id 与反查选定的 chat_id 不一致，发送脚本仍使用反查结果，并在状态中记录 `env_chat_conflict`
+   - 最近 15 分钟窗口外的历史相同问题不算多命中；窗口内相同 query 以 `create_time` 最新消息为准
    - 如果最终结论已经以普通文本输出，但本轮没有 `send_feishu_card.py` 调用记录，视为违反本技能输出规则
 
 ## 意图分类
 
 | 意图 | 识别特征 | 查询策略 |
 |------|---------|---------|
-| 数据统计 | 统计、汇总、占比、成功率、总数、计数、健康检查、有多少、多少笔 | API 优先并强制完整性；API 不完整则 WorkBuddy；本地 Chrome 备用路径才用 `--require-complete` |
+| 数据统计 | 统计、汇总、占比、成功率、总数、计数、健康检查、有多少、多少笔 | 先用 API 探测；<=500 精确，500-1000 按意图选择，>1000 默认采样 |
 | 流程追踪 | 借款、下单、放款、还款、权益、签约、绑卡、指定 `traceId`/`orderId`/`contractNo` | 路由到业务模块 reference，按入口日志定位 `traceId`，再查全链路 |
 | 健康检查 | 最近有没有异常、无具体标识符 | 使用业务模块 reference 的总览式查询步骤 |
 | SSO/登录 | 浏览器 fallback 跳转 Argus/JANUS/PMP 登录 | 使用 `xh-sso-access` |
@@ -239,6 +241,10 @@ disable: false
 用户问"我们组"、"客户订单组"、"这批服务"的整体日志、异常、健康情况时，不需要再追问服务范围；按上方映射表 `serviceName` 列覆盖全部客户订单组服务。若用户同时给出具体业务关键词，再按下表选择业务模块并在该模块内覆盖相关服务。
 
 用户问表中`别名`对应的整体日志、异常、健康情况时，不需要追问具体 `serviceName`；按同别名的全部 `serviceName` 查询。用户明确写出具体 `serviceName` 时，才只查该单个服务。
+
+业务意图优先级固定为：标识符查询 → 业务链路查询 → 服务健康查询 → 服务别名范围查询。用户提供 `traceId/orderId/cid/contractNo` 等标识符时优先按标识符查；用户描述"下单、借款下单、下单成功、下单失败、下单异常、下单链路异常、拦截"时，按业务链路查询处理并优先使用模块锚点。只有用户明确说"订单服务异常"、"订单组异常"、"客户订单组健康检查"、"`order-batch`"、"`order-batch-timing`"、"`mqResendJob`"、"服务健康"等服务侧语义时，才按服务健康或服务组范围处理。
+
+业务链路查询的结论必须围绕用户目标输出。通用服务 ERROR/WARN 可以作为背景风险提示，但必须单独标注为"服务背景异常"或"订单组服务异常"，不得汇总成业务链路异常。
 
 | 关键词 | 业务模块 reference | 业务模块 |
 |--------|---------|--------|
@@ -252,18 +258,18 @@ disable: false
 
 ## 标准工作流
 
-1. 提取环境、时间范围、标识符和服务范围；服务范围按"具体 `serviceName` → 表中`别名`对应服务组 → 我们组/客户订单组全表服务"识别 → 分类意图 → 路由到业务模块 reference。
-2. 代码锚点校验（规则见上文"推荐查询锚点校验"），组装 CLS 查询。
-3. **判断是否为统计模式（见"数据统计强制约束"）。是 → `cls_query.py --method auto --require-complete`；API 完整才可统计。**
+1. 提取环境、时间范围、标识符和业务意图；按"标识符 → 业务链路 → 服务健康 → 服务别名范围"确认查询目标，再路由到业务模块 reference 或服务组范围。业务链路查询优先于服务别名扩范围。
+2. 按"SQL 条件下沉强制约束"先组装完整 CLS 查询；条件不明确时按"模块 reference 锚点 → 本地代码日志 → 保守兜底查询"顺序收窄，禁止宽查后筛。
+3. **判断是否为统计模式（见"数据统计强制约束"）。是 → `cls_query.py --method auto --api-limit 500` 先探测；按 `log_count/is_complete/has_more` 决定精确统计或采样统计。**
 4. 非统计模式默认 `cls_query.py --method auto`。API 不可用或结果不完整时，用返回的 `cls_url` 交给 WorkBuddy 内置浏览器；必要时再显式切换本地 Chrome 备用路径。
 5. 0 命中时按"无结果排查清单"回退。
-6. 分析日志 → 执行「来源识别与飞书卡片发送」→ 优先发送飞书卡片。发送失败、来源缺失或歧义时 fallback 为当前会话纯文本。仅使用本地 Chrome 备用窗口时，最后调用 `cls_query.py --close` 关窗口。
+6. 分析日志 → 执行「来源识别与飞书卡片发送」→ 优先发送飞书卡片。发送成功后当前会话静默或只输出 `已发送飞书卡片。`；发送失败、来源缺失或候选详情获取失败时 fallback 为当前会话纯文本。仅使用本地 Chrome 备用窗口时，最后调用 `cls_query.py --close` 关窗口。
 
 ## CLS 工具
 
 ### 默认：API 优先查询
 
-`cls_query.py` 默认使用 `--method auto`：先走 CLS HTTP API；API 失败或无法确认完整时，返回 `fallback_method: "workbuddy"` 和完整 `cls_url`。只有显式 `--method local-chrome` 或 `--use-local-chrome` 才会打开本地 Chrome。
+`cls_query.py` 默认使用 `--method auto`：先走 CLS HTTP API，默认最多拉取 500 条用于统计探测和小数据精确统计；API 失败或无法确认完整时，返回 `fallback_method: "workbuddy"` 和完整 `cls_url`。只有显式 `--method local-chrome` 或 `--use-local-chrome` 才会打开本地 Chrome。
 
 ```bash
 python3 ${WORKBUDDY_SKILL_DIR}/scripts/cls_query.py \
@@ -309,10 +315,10 @@ python3 ${WORKBUDDY_SKILL_DIR}/scripts/cls_query.py \
 - `expanded_url`：扩大时间范围链接
 - `output_path`：本地 Chrome 备用路径提取的全文路径
 - `log_count`：从\"日志条数\"解析出的结果数（注意：含 `=` 的查询可能退化为全量返回，log_count 不可靠）
-- `completeness_ratio`：加载比例（0.0~1.0），统计模式下必须为 1.0
+- `completeness_ratio`：加载比例（0.0~1.0）；精确统计必须为 1.0，采样统计必须标明样本口径
 - `services`：提取到的服务名
 - `contracts`：提取到的 CK/CS 合同号
-- 统计模式不完整时额外返回：`error`, `error_message`, `action_required`, `suggested_actions`, `PROHIBITION`
+- 精确统计不完整时额外返回：`error`, `error_message`, `action_required`, `suggested_actions`, `PROHIBITION`
 
 ### 备用：本地 Chrome 统计模式查询（强制完整数据）
 
@@ -327,7 +333,7 @@ python3 ${WORKBUDDY_SKILL_DIR}/scripts/cls_query.py \
   --use-local-chrome
 ```
 
-仅在 WorkBuddy 不可用、页面操作失败或需要批量自动提取时使用此备用路径。统计模式下调用 `cls_query.py` 执行/提取必须使用 `--require-complete`；工具自动加载更多数据（最多 200 次）。仍不完整时返回 `error: INCOMPLETE_DATA` 和拆分建议，此时禁止分析已有数据。
+仅在 WorkBuddy 不可用、页面操作失败、需要批量自动提取或用户明确要求精确统计时使用此备用路径。精确统计路径调用 `cls_query.py` 执行/提取必须使用 `--require-complete`；工具自动加载更多数据（最多 200 次）。仍不完整时返回 `error: INCOMPLETE_DATA` 和拆分建议，此时禁止输出精确统计，只能说明阻塞原因、已加载样本范围和下一步建议。
 
 ### 中文查询
 
@@ -364,7 +370,7 @@ URL: `https://datasight-1300455117.internal.clsconsole.tencent-cloud.com/cls/sea
 
 ## 飞书卡片结论与纯文本 fallback
 
-最终结论优先使用飞书卡片。只有卡片发送失败、来源缺失或歧义时，才使用字段化纯文本 fallback，避免表格、代码块、复杂嵌套列表和卡片语法。fallback 推荐结构：
+最终结论优先使用飞书卡片。卡片发送成功后，当前会话静默或只输出 `已发送飞书卡片。`。只有卡片发送失败、来源缺失或候选详情获取失败时，才使用字段化纯文本 fallback，避免表格、代码块、复杂嵌套列表和卡片语法。fallback 推荐结构：
 
 结论: 一句话说明结果、根因或当前健康状态。
 查询范围: 环境、时间范围、topic、CLS 查询语句。
@@ -377,6 +383,11 @@ URL: `https://datasight-1300455117.internal.clsconsole.tencent-cloud.com/cls/sea
 
 ## References
 
+- 订单/下单/预检/试算问题：读 `references/modules/order.md`
+- 签约/重签/协议/绑卡问题：读 `references/modules/sign.md`
+- 权益/VIP/优惠券/乐活卡问题：读 `references/modules/benefit.md`
+- 放款/资金路由/loki/提前结清问题：读 `references/modules/loan.md`
+- 还款/扣款/结清/逾期问题：读 `references/modules/repay.md`
 - `references/common/update-master-branch.md`：更新本地 `master` 分支代码
 - `references/common/cls-local-chrome-access.md`：备用：本地 Chrome 专用窗口访问 CLS
 - `references/common/cls-dom-extraction.md`：全文提取、加载更多、CK/CS 合同号解析
@@ -387,4 +398,3 @@ URL: `https://datasight-1300455117.internal.clsconsole.tencent-cloud.com/cls/sea
 - `references/common/trace-dubbo-profile-filter.md`：Dubbo 全链路追踪（ProfileFilter CS/CR/SS/SR 标记解读 + 溯源方法论）
 - `references/common/cls-topic-field-reference.md`：CLS Topic 字段对照表（生产/测试环境 topic 属性与索引字段）
 - `references/common/efficient-query-pattern-20260517.md`：高效查询工作流（查询耗时优化、CLS 页面异常处理）
-- `references/common/cls-iframe-crossorigin-workflow.md`：历史废弃 iframe 方案，只作背景

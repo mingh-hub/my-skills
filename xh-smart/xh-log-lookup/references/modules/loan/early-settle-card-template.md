@@ -92,9 +92,10 @@ thor-app-gateway (env)
 
 ```bash
 python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py \
-  --resolve-chat --query "{用户原始问题}" \
+  --resolve-chat --source-query "{用户原始问题}" \
   --resolve-window-minutes 15 \
   --at-sender \
+  --quiet-success \
   --title "🔴 提前结清失败 · 05-19 14:06:33~14:06:36" \
   --color yellow \
   --cls-url "https://datasight-1300455117.internal.clsconsole.tencent-cloud.com/cls/search?region=ap-beijing&topic_id=1f92a7ca-cf46-4f4f-92dd-72c5df5910dc&time=now-1d,now&queryBase64=$(python3 -c \"import base64; print(base64.b64encode(b'traceId:\\\"d3acd9c5b5207e00\\\"').decode())\")" \

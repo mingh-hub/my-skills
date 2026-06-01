@@ -344,6 +344,35 @@ def _extract_service(log_json: object, message: str) -> str:
     return match.group(1) if match else ""
 
 
+def _normalize_level(value: object) -> str:
+    level = str(value).strip().upper()
+    return level
+
+
+def _extract_level(log_json: object, message: str) -> str:
+    if isinstance(log_json, dict):
+        for key in ("level", "Level", "LEVEL"):
+            if log_json.get(key):
+                return _normalize_level(log_json[key])
+
+        fields = log_json.get("fields")
+        if isinstance(fields, dict):
+            for key in ("level", "Level", "LEVEL"):
+                if fields.get(key):
+                    return _normalize_level(fields[key])
+
+        nested_log = log_json.get("log")
+        if isinstance(nested_log, dict):
+            for key in ("level", "Level", "LEVEL"):
+                if nested_log.get(key):
+                    return _normalize_level(nested_log[key])
+
+    match = re.search(r"\b(FATAL|ERROR|WARNING|WARN|INFO|DEBUG|TRACE)\b", message, re.IGNORECASE)
+    if match:
+        return _normalize_level(match.group(1))
+    return "INFO"
+
+
 def parse_api_response(response: dict, api_limit: int) -> tuple[list[dict], int, bool, bool]:
     response_data = response.get("Response", {})
     results = response_data.get("Results", [])
@@ -365,10 +394,11 @@ def parse_api_response(response: dict, api_limit: int) -> tuple[list[dict], int,
 
         message = _extract_message(log_json)
         service = _extract_service(log_json, message)
+        level = _extract_level(log_json, message)
         log_entry = {
             "timestamp": timestamp,
             "timestamp_ms": timestamp_ms,
-            "level": "INFO",
+            "level": level,
             "message": message,
             "serviceName": service,
             "source": item.get("TopicName", ""),
@@ -477,7 +507,12 @@ def main() -> int:
     parser.add_argument("--time", dest="time_range")
     parser.add_argument("--expanded-time")
     parser.add_argument("--output", default="/tmp/cls_output.txt")
-    parser.add_argument("--api-limit", type=int, default=100, help="CLS API result limit.")
+    parser.add_argument(
+        "--api-limit",
+        type=int,
+        default=500,
+        help="CLS API result limit. Defaults to 500 for stats probing and small exact stats.",
+    )
     parser.add_argument("--api-timeout", type=int, default=60, help="CLS API timeout in seconds.")
     parser.add_argument("--max-load-more", type=int, default=15)
     parser.add_argument("--delay", type=float, default=1.0)
