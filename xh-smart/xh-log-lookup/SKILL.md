@@ -211,11 +211,13 @@ SQL 构造顺序：
    python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py \
      --resolve-chat --source-query "{用户原始问题}" \
      --resolve-window-minutes 15 \
+     --debug-log-dir "/private/tmp/xh-log-lookup-route" \
      --at-sender \
      --quiet-success \
      --title "..." --color "..." --data "..."
    ```
    - 正常路径必须保留 `--resolve-chat --source-query`；只要传入 `--resolve-chat`，脚本就必须使用原始问题 + 时间窗反查群聊和私聊来源，并在多命中时选择最新消息，环境变量不得短路发送目标
+   - 建议保留 `--debug-log-dir "/private/tmp/xh-log-lookup-route"`；当卡片 fallback 到 home channel 时，优先查看审计 JSON 中的 `fallback`、`searches`、`mget` 和 `selection` 定位反查失败原因
    - `--data` 是卡片内容，允许 `{}` 表示无结果卡片；它不参与来源反查，也不能替代 `--source-query`
    - 需要人工指定目标时可传 `--chat "{chat_id}"`
    - 发送脚本退出码为 0 → 视为卡片已发送，当前会话不得再输出诊断结论、摘要、证据、CLS 链接或卡片内容

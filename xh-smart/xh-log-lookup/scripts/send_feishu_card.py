@@ -97,6 +97,79 @@ def _first_env(keys):
     return "", ""
 
 
+def _now_iso():
+    return datetime.now(timezone(timedelta(hours=8))).isoformat(timespec="seconds")
+
+
+def _truncate(value, limit=500):
+    text = "" if value is None else str(value)
+    return text[:limit]
+
+
+def _redact_audit_text(value, sensitive_text="", limit=500):
+    text = "" if value is None else str(value)
+    if sensitive_text:
+        text = text.replace(sensitive_text, "<redacted_source_query>")
+    return text[:limit]
+
+
+class RouteAudit:
+    def __init__(self, debug_log_dir=""):
+        self.debug_log_dir = debug_log_dir or ""
+        self.data = {
+            "created_at": _now_iso(),
+            "pid": os.getpid(),
+            "source_query_length": 0,
+            "resolve_window_minutes": None,
+            "start_time": "",
+            "searches": [],
+            "mget": [],
+            "selection": {},
+            "fallback": {},
+            "send": {},
+        }
+
+    def enabled(self):
+        return bool(self.debug_log_dir)
+
+    def set_context(self, source_query, resolve_window_minutes, start_time):
+        self.data["source_query_length"] = len(source_query or "")
+        self.data["resolve_window_minutes"] = resolve_window_minutes
+        self.data["start_time"] = start_time or ""
+
+    def add_search(self, entry):
+        self.data["searches"].append(entry)
+
+    def add_mget(self, entry):
+        self.data["mget"].append(entry)
+
+    def set_selection(self, **kwargs):
+        self.data["selection"].update(kwargs)
+
+    def set_fallback(self, **kwargs):
+        self.data["fallback"].update(kwargs)
+
+    def set_send(self, **kwargs):
+        self.data["send"].update(kwargs)
+
+    def flush(self):
+        if not self.enabled():
+            return ""
+        try:
+            os.makedirs(self.debug_log_dir, exist_ok=True)
+            ts = datetime.now(timezone(timedelta(hours=8))).strftime("%Y%m%d_%H%M%S")
+            path = os.path.join(
+                self.debug_log_dir,
+                f"send_feishu_card_route_{ts}_{os.getpid()}.json",
+            )
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(self.data, f, ensure_ascii=False, indent=2)
+            return path
+        except Exception as exc:
+            sys.stderr.write(f"[route_audit] flush failed: {_truncate(exc, 200)}\n")
+            return ""
+
+
 def _schema_error(message, unknown_keys=None, field_errors=None):
     return {
         "status": "error",
@@ -358,7 +431,7 @@ def parse_cls_raw_text(raw_text):
     return {"call_chain": rows[:20], "log_count": total_count or len(rows)}
 
 
-def _search_messages(query, start, chat_type, at_bot=False):
+def _search_messages(query, start, chat_type, at_bot=False, audit=None, source=""):
     parts = [
         "lark-cli im +messages-search",
         "--as user",
@@ -375,7 +448,29 @@ def _search_messages(query, start, chat_type, at_bot=False):
         parts.append(f"--at-chatter-ids '{BOT_OPEN_ID}'")
     cmd = " ".join(parts)
     result = _lark_run(cmd)
-    return _load_json_output(result.stdout, result.stderr, "resolve_chat.search")
+    data = _load_json_output(result.stdout, result.stderr, "resolve_chat.search")
+    if audit:
+        payload = data.get("data", {}) if isinstance(data, dict) else {}
+        message_ids = _extract_message_ids(payload) if isinstance(payload, dict) else []
+        audit.add_search({
+            "source": source,
+            "query_length": len(query or ""),
+            "chat_type": chat_type,
+            "at_bot": at_bot,
+            "has_at_chatter_ids": bool(at_bot),
+            "uses_sender_type": False,
+            "start": start,
+            "ok": data.get("ok") if isinstance(data, dict) else False,
+            "total": payload.get("total") if isinstance(payload, dict) else None,
+            "message_ids_count": len(message_ids),
+            "message_ids_preview": message_ids[:5],
+            "error_summary": (
+                _redact_audit_text(data.get("error"), query, 500)
+                if isinstance(data, dict) else "parse_failed"
+            ),
+            "stderr_summary": _redact_audit_text(getattr(result, "stderr", ""), query, 500),
+        })
+    return data
 
 
 def _extract_message_ids(search_payload):
@@ -389,22 +484,61 @@ def _extract_message_ids(search_payload):
     return message_ids
 
 
-def _fetch_message_detail(msg_id):
+def _fetch_message_detail(msg_id, audit=None, source=""):
     cmd = f"lark-cli im +messages-mget --message-ids '{msg_id}' --as bot"
     detail_result = _lark_run(cmd)
 
     detail_data = _load_json_output(detail_result.stdout, detail_result.stderr, "resolve_chat.mget")
     if detail_data is None:
+        if audit:
+            audit.add_mget({
+                "source": source,
+                "message_id": msg_id,
+                "ok": False,
+                "error": "mget parse failed",
+                "stderr_summary": _truncate(getattr(detail_result, "stderr", ""), 500),
+            })
         return None, "mget parse failed"
 
     if not detail_data.get("ok"):
-        return None, detail_data.get("error", "mget failed")
+        error = detail_data.get("error", "mget failed")
+        if audit:
+            audit.add_mget({
+                "source": source,
+                "message_id": msg_id,
+                "ok": False,
+                "error": _truncate(error, 500),
+                "stderr_summary": _truncate(getattr(detail_result, "stderr", ""), 500),
+            })
+        return None, error
 
     msgs = detail_data.get("data", {}).get("messages", [])
     if not msgs:
+        if audit:
+            audit.add_mget({
+                "source": source,
+                "message_id": msg_id,
+                "ok": False,
+                "error": "mget returned no messages",
+                "stderr_summary": _truncate(getattr(detail_result, "stderr", ""), 500),
+            })
         return None, "mget returned no messages"
 
-    return msgs[0], ""
+    msg = msgs[0]
+    if audit:
+        sender = msg.get("sender", {})
+        audit.add_mget({
+            "source": source,
+            "message_id": msg_id,
+            "ok": True,
+            "chat_id": msg.get("chat_id", ""),
+            "chat_type": msg.get("chat_type") or msg.get("chat_type_v2") or "",
+            "sender_id": sender.get("id", ""),
+            "create_time": msg.get("create_time", ""),
+            "update_time": msg.get("update_time", ""),
+            "timestamp": msg.get("timestamp", ""),
+        })
+    return msg, ""
 
 
 def _message_time_value(msg):
@@ -428,7 +562,7 @@ def _recent_start(minutes):
     return (datetime.now(tz) - timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%S+08:00")
 
 
-def resolve_chat(query, window_minutes=15):
+def resolve_chat(query, window_minutes=15, audit=None):
     """在时间窗内用问题文本精确搜索群聊 @Bot 或私聊 p2p 消息。
 
     Returns:
@@ -443,9 +577,25 @@ def resolve_chat(query, window_minutes=15):
         return {}
 
     start = _recent_start(window_minutes)
+    if audit:
+        audit.set_context(query, window_minutes, start)
     searches = [
-        ("group_at_bot", _search_messages(query=query, start=start, chat_type="group", at_bot=True)),
-        ("p2p", _search_messages(query=query, start=start, chat_type="p2p", at_bot=False)),
+        ("group_at_bot", _search_messages(
+            query=query,
+            start=start,
+            chat_type="group",
+            at_bot=True,
+            audit=audit,
+            source="group_at_bot",
+        )),
+        ("p2p", _search_messages(
+            query=query,
+            start=start,
+            chat_type="p2p",
+            at_bot=False,
+            audit=audit,
+            source="p2p",
+        )),
     ]
     candidates = []
     seen_ids = set()
@@ -482,6 +632,14 @@ def resolve_chat(query, window_minutes=15):
                 })
 
     if not candidates:
+        if audit:
+            audit.set_selection(
+                selected_source="",
+                matched_msg_id="",
+                resolved_chat_id="",
+                resolved_chat_type="",
+                reason="no_candidates",
+            )
         return {
             "unresolved": True,
             "matched_count": 0,
@@ -492,7 +650,11 @@ def resolve_chat(query, window_minutes=15):
     detailed_candidates = []
     detail_errors = []
     for candidate in candidates:
-        msg, error_detail = _fetch_message_detail(candidate["msg_id"])
+        msg, error_detail = _fetch_message_detail(
+            candidate["msg_id"],
+            audit=audit,
+            source=candidate["source"],
+        )
         if msg is None:
             detail_errors.append({
                 "msg_id": candidate["msg_id"],
@@ -511,6 +673,14 @@ def resolve_chat(query, window_minutes=15):
 
     if not detailed_candidates:
         sys.stderr.write(f"[resolve_chat] mget error: {json.dumps(detail_errors[:3], ensure_ascii=False)[:500]}\n")
+        if audit:
+            audit.set_selection(
+                selected_source="",
+                matched_msg_id="",
+                resolved_chat_id="",
+                resolved_chat_type="",
+                reason="detail_fetch_failed",
+            )
         return {
             "unresolved": True,
             "error": "detail_fetch_failed",
@@ -537,7 +707,7 @@ def resolve_chat(query, window_minutes=15):
     elif chat_type not in ("group", "p2p"):
         chat_type = expected_chat_type
 
-    return {
+    result = {
         "chat_id": msg.get("chat_id", ""),
         "chat_type": chat_type,
         "resolved_chat_type": chat_type,
@@ -550,6 +720,17 @@ def resolve_chat(query, window_minutes=15):
         "selected_time_value": selected.get("time_value"),
         "detail_errors": detail_errors,
     }
+    if audit:
+        audit.set_selection(
+            selected_source=source,
+            matched_msg_id=selected["msg_id"],
+            resolved_chat_id=result["chat_id"],
+            resolved_chat_type=chat_type,
+            matched_count=matched_count,
+            selected_time_field=selected.get("time_field", ""),
+            selected_time_value=selected.get("time_value"),
+        )
+    return result
 
 
 def _source_resolution_meta(resolved, fallback, env_key=""):
@@ -580,6 +761,7 @@ def resolve_send_target(
     default_private_key,
     default_private_chat_id,
     resolver=resolve_chat,
+    audit=None,
 ):
     sender_info = {}
     send_meta = {}
@@ -590,6 +772,13 @@ def resolve_send_target(
     if args.resolve_chat:
         source_query = (args.source_query or "").strip()
         if not source_query:
+            if audit:
+                audit.set_fallback(
+                    fallback_target="plain_text",
+                    fallback_reason="missing_source_query",
+                    chat_source="",
+                    env_key="",
+                )
             return None, "", sender_info, send_meta, {
                 "status": "error",
                 "error": "missing_source_query",
@@ -604,8 +793,10 @@ def resolve_send_target(
             "source_query_provided": True,
             "source_query_length": len(source_query),
         })
+        if audit:
+            audit.set_context(source_query, args.resolve_window_minutes, "")
 
-        resolved = resolver(source_query, args.resolve_window_minutes)
+        resolved = resolver(source_query, args.resolve_window_minutes, audit=audit)
         if resolved and not resolved.get("unresolved") and resolved.get("chat_id"):
             chat_id = resolved["chat_id"]
             chat_source = resolved.get("search_strategy") or "--resolve-chat"
@@ -624,6 +815,13 @@ def resolve_send_target(
                     "env_chat_id": env_chat_id,
                     "resolved_chat_id": chat_id,
                 }
+            if audit:
+                audit.set_fallback(
+                    fallback_target="",
+                    fallback_reason="resolved_source",
+                    chat_source=chat_source,
+                    env_key="",
+                )
             return chat_id, chat_source, sender_info, send_meta, None
 
         if resolved and not resolved.get("unresolved"):
@@ -639,6 +837,13 @@ def resolve_send_target(
                 "default_private_chat",
                 default_private_key,
             )
+            if audit:
+                audit.set_fallback(
+                    fallback_target="default_private_chat",
+                    fallback_reason=send_meta["source_resolution"].get("error", "no_match"),
+                    chat_source=default_private_key,
+                    env_key=default_private_key,
+                )
             return default_private_chat_id, default_private_key, sender_info, send_meta, None
 
         if env_chat_id:
@@ -647,9 +852,23 @@ def resolve_send_target(
                 "current_env_chat",
                 chat_key,
             )
+            if audit:
+                audit.set_fallback(
+                    fallback_target="current_env_chat",
+                    fallback_reason=send_meta["source_resolution"].get("error", "no_match"),
+                    chat_source=chat_key,
+                    env_key=chat_key,
+                )
             return env_chat_id, chat_key, sender_info, send_meta, None
 
         source_meta = _source_resolution_meta(resolved, "plain_text")
+        if audit:
+            audit.set_fallback(
+                fallback_target="plain_text",
+                fallback_reason=source_meta.get("error", "no_match"),
+                chat_source="",
+                env_key="",
+            )
         return None, "", sender_info, send_meta, {
             "status": "unresolved",
             "error": "missing_private_target",
@@ -777,7 +996,7 @@ def build_card(title, color, cls_url, cls_url_expanded, data,
     return card
 
 
-def send_card(chat_id, card, chat_source, meta=None, quiet_success=False):
+def send_card(chat_id, card, chat_source, meta=None, quiet_success=False, audit=None):
     """通过 lark-cli bot 身份发送飞书卡片"""
     card_json = json.dumps(card, ensure_ascii=False)
     meta = meta or {}
@@ -816,17 +1035,40 @@ def send_card(chat_id, card, chat_source, meta=None, quiet_success=False):
                   "chat_source": chat_source}
         if meta:
             output["meta"] = meta
+        if audit:
+            audit.set_send(
+                status="error",
+                chat_id=chat_id,
+                chat_source=chat_source,
+                error="send_response_parse_failed",
+                stderr_summary=_truncate(stderr_detail, 500),
+            )
+            path = audit.flush()
+            if path:
+                output["route_audit_path"] = path
         print(json.dumps(output, ensure_ascii=False), file=sys.stderr)
         sys.exit(1)
 
     if data.get("ok"):
         msg_id = data.get("data", {}).get("message_id", "unknown")
+        if audit:
+            audit.set_send(
+                status="sent",
+                message_id=msg_id,
+                chat_id=chat_id,
+                chat_source=chat_source,
+            )
+            path = audit.flush()
+        else:
+            path = ""
         if quiet_success:
             return
         output = {"status": "sent", "message_id": msg_id,
                   "chat_id": chat_id, "chat_source": chat_source}
         if meta:
             output["meta"] = meta
+        if path:
+            output["route_audit_path"] = path
         print(json.dumps(output, ensure_ascii=False))
     else:
         sys.stderr.write(f"[send_card] API 错误: {json.dumps(data, ensure_ascii=False)[:500]}\n")
@@ -835,6 +1077,17 @@ def send_card(chat_id, card, chat_source, meta=None, quiet_success=False):
                   "chat_source": chat_source}
         if meta:
             output["meta"] = meta
+        if audit:
+            audit.set_send(
+                status="error",
+                chat_id=chat_id,
+                chat_source=chat_source,
+                error="send_api_error",
+                detail=_truncate(json.dumps(data, ensure_ascii=False), 500),
+            )
+            path = audit.flush()
+            if path:
+                output["route_audit_path"] = path
         print(json.dumps(output, ensure_ascii=False), file=sys.stderr)
         sys.exit(1)
 
@@ -863,6 +1116,8 @@ def main():
                         help="CLS 原始文本，自动解析为 call_chain（替代手动构建 --data 中的 call_chain）")
     parser.add_argument("--data", required=True,
                         help="JSON: {summary_fields, call_chain, analysis, log_count}")
+    parser.add_argument("--debug-log-dir", default="",
+                        help="可选：将来源反查审计日志写入该目录，便于追踪 fallback 到 home channel 的原因")
     parser.add_argument("--quiet-success", action="store_true",
                         help="发送成功时不向 stdout 输出 status JSON，用于避免宿主应用重复回复")
 
@@ -872,6 +1127,7 @@ def main():
 
     sender_info = {}
     send_meta = {}
+    audit = RouteAudit(args.debug_log_dir)
 
     chat_id = None
     chat_source = ""
@@ -892,8 +1148,13 @@ def main():
         sender_key,
         default_private_key,
         default_private_chat_id,
+        audit=audit,
     )
     if target_error:
+        audit.set_send(status="not_sent", error=target_error.get("error", "target_error"))
+        path = audit.flush()
+        if path:
+            target_error["route_audit_path"] = path
         stream = sys.stderr if target_error.get("status") == "error" else sys.stdout
         print(json.dumps(target_error, ensure_ascii=False), file=stream)
         sys.exit(1 if target_error.get("status") == "error" else 2)
@@ -923,7 +1184,14 @@ def main():
     else:
         card = build_card(args.title, args.color, args.cls_url, args.cls_url_expanded, data)
 
-    send_card(chat_id, card, chat_source, meta=send_meta, quiet_success=args.quiet_success)
+    send_card(
+        chat_id,
+        card,
+        chat_source,
+        meta=send_meta,
+        quiet_success=args.quiet_success,
+        audit=audit,
+    )
 
 
 if __name__ == "__main__":
