@@ -202,5 +202,43 @@ class ResolveSendTargetTest(unittest.TestCase):
         self.assertEqual(error["source_error"], "no_match")
 
 
+class SearchMessagesCommandTest(unittest.TestCase):
+    def _capture_search_command(self, chat_type, at_bot):
+        captured = {}
+        original_lark_run = send_feishu_card._lark_run
+        try:
+            def fake_lark_run(cmd):
+                captured["cmd"] = cmd
+                return SimpleNamespace(
+                    stdout='{"ok": true, "data": {"total": 0}}',
+                    stderr="",
+                )
+
+            send_feishu_card._lark_run = fake_lark_run
+            send_feishu_card._search_messages(
+                query="看下我们组近半小时服务异常情况",
+                start="2026-06-01T10:30:00+08:00",
+                chat_type=chat_type,
+                at_bot=at_bot,
+            )
+        finally:
+            send_feishu_card._lark_run = original_lark_run
+        return captured["cmd"]
+
+    def test_group_search_uses_at_bot_without_sender_type(self):
+        cmd = self._capture_search_command(chat_type="group", at_bot=True)
+
+        self.assertIn("--chat-type 'group'", cmd)
+        self.assertIn(f"--at-chatter-ids '{send_feishu_card.BOT_OPEN_ID}'", cmd)
+        self.assertNotIn("--sender-type user", cmd)
+
+    def test_p2p_search_omits_at_bot_and_sender_type(self):
+        cmd = self._capture_search_command(chat_type="p2p", at_bot=False)
+
+        self.assertIn("--chat-type 'p2p'", cmd)
+        self.assertNotIn("--at-chatter-ids", cmd)
+        self.assertNotIn("--sender-type user", cmd)
+
+
 if __name__ == "__main__":
     unittest.main()

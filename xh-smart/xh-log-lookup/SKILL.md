@@ -197,7 +197,7 @@ SQL 构造顺序：
 
 2. **来源优先级**：`--chat` 是人工显式指定目标，优先级最高。WorkBuddy 正常路径必须使用 `--resolve-chat --source-query "{用户原始问题}"`，并以来源反查选定的 `chat_id` 作为发送目标。`WORKBUDDY_HOME_CHANNEL_CHAT_ID` 只在来源反查失败时兜底；`FEISHU_CURRENT_CHAT_ID` / `AGENT_CURRENT_CHAT_ID` 等环境变量只作为更低优先级兼容路径，不能覆盖或短路成功反查结果。
 
-3. **反查来源**：`--resolve-chat` 使用 `send_feishu_card.py` 的当前实现为准：用 `--source-query` 里的用户原始问题精确搜索最近 15 分钟内的群聊 @Bot 消息和私聊 p2p 消息。`--source-query` 必须来自触发技能的原始消息；群聊文本可去掉 `@Tom` 和首尾空白，私聊直接使用用户输入正文；禁止传分析摘要、关键切片、卡片标题或改写后的问题。
+3. **反查来源**：`--resolve-chat` 使用 `send_feishu_card.py` 的当前实现为准：用 `--source-query` 里的用户原始问题精确搜索最近 15 分钟内的群聊 @Bot 消息和私聊 p2p 消息。`--source-query` 必须来自触发技能的原始消息；群聊命中只依赖 `--chat-type group + --at-chatter-ids BOT_OPEN_ID`，不再额外加 `--sender-type user`，避免飞书索引延迟；群聊文本可去掉 `@Tom` 和首尾空白，私聊直接使用用户输入正文；禁止传分析摘要、关键切片、卡片标题或改写后的问题。
 4. **WorkBuddy 直问兜底**：如果 `--resolve-chat` 未反查到可用来源，但已配置 `WORKBUDDY_HOME_CHANNEL_CHAT_ID`，则将卡片发送到该 home channel 私聊；只有该目标也不存在时，才降级为纯文本 fallback。
 
 5. **当前脚本行为**：

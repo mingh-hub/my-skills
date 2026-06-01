@@ -367,7 +367,6 @@ def _search_messages(query, start, chat_type, at_bot=False):
     parts.append(f"--query '{escaped_query}'")
     parts.extend([
         f"--chat-type '{chat_type}'",
-        "--sender-type user",
         f"--start '{start}'",
         "--page-limit 1",
         "--page-size 5",
