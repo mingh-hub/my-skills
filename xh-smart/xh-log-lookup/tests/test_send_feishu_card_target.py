@@ -12,11 +12,11 @@ SPEC.loader.exec_module(send_feishu_card)
 
 
 class ResolveSendTargetTest(unittest.TestCase):
-    def _args(self, chat=None, resolve_chat=False, query="raw question"):
+    def _args(self, chat=None, resolve_chat=False, source_query="raw question"):
         return SimpleNamespace(
             chat=chat,
             resolve_chat=resolve_chat,
-            query=query,
+            source_query=source_query,
             resolve_window_minutes=15,
         )
 
@@ -61,7 +61,11 @@ class ResolveSendTargetTest(unittest.TestCase):
         self.assertIsNone(error)
 
     def test_resolved_feishu_source_wins_over_default_private(self):
+        seen = {}
+
         def resolver(query, window_minutes):
+            seen["query"] = query
+            seen["window_minutes"] = window_minutes
             return {
                 "chat_id": "oc_group",
                 "chat_type": "group",
@@ -82,13 +86,34 @@ class ResolveSendTargetTest(unittest.TestCase):
             default_private_chat_id="oc_private",
         )
 
+        self.assertEqual(seen["query"], "raw question")
+        self.assertEqual(seen["window_minutes"], 15)
         self.assertEqual(chat_id, "oc_group")
         self.assertEqual(chat_source, "latest_query_group_at_bot_15m")
         self.assertEqual(sender_info["sender_open_id"], "ou_sender")
         self.assertEqual(sender_info["chat_type"], "group")
         self.assertEqual(send_meta["matched_msg_id"], "om_msg")
+        self.assertTrue(send_meta["source_query_provided"])
+        self.assertEqual(send_meta["source_query_length"], len("raw question"))
         self.assertIn("env_chat_conflict", send_meta)
         self.assertIsNone(error)
+
+    def test_resolve_chat_requires_source_query(self):
+        def resolver(query, window_minutes):
+            raise AssertionError("resolver should not be called")
+
+        chat_id, chat_source, sender_info, send_meta, error = self._select(
+            self._args(resolve_chat=True, source_query=""),
+            resolver,
+        )
+
+        self.assertIsNone(chat_id)
+        self.assertEqual(chat_source, "")
+        self.assertEqual(sender_info, {})
+        self.assertEqual(send_meta, {})
+        self.assertEqual(error["status"], "error")
+        self.assertEqual(error["error"], "missing_source_query")
+        self.assertIn("--source-query", error["message"])
 
     def test_unresolved_source_uses_default_private_chat(self):
         def resolver(query, window_minutes):
@@ -170,7 +195,8 @@ class ResolveSendTargetTest(unittest.TestCase):
         self.assertIsNone(chat_id)
         self.assertEqual(chat_source, "")
         self.assertEqual(sender_info, {})
-        self.assertEqual(send_meta, {})
+        self.assertTrue(send_meta["source_query_provided"])
+        self.assertEqual(send_meta["source_query_length"], len("raw question"))
         self.assertEqual(error["status"], "unresolved")
         self.assertEqual(error["error"], "missing_private_target")
         self.assertEqual(error["source_error"], "no_match")

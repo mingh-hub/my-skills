@@ -195,9 +195,9 @@ SQL 构造顺序：
 
 1. **必须先调用发送脚本**：最终结论生成后，先执行 `send_feishu_card.py --quiet-success`。不要先输出普通文本结论；只有发送脚本返回非 0 或明确失败状态时，才输出纯文本 fallback。
 
-2. **来源优先级**：`--chat` 是人工显式指定目标，优先级最高。WorkBuddy 正常路径必须使用 `--resolve-chat --query "{用户原始问题}"`，并以来源反查选定的 `chat_id` 作为发送目标。`WORKBUDDY_HOME_CHANNEL_CHAT_ID` 只在来源反查失败时兜底；`FEISHU_CURRENT_CHAT_ID` / `AGENT_CURRENT_CHAT_ID` 等环境变量只作为更低优先级兼容路径，不能覆盖或短路成功反查结果。
+2. **来源优先级**：`--chat` 是人工显式指定目标，优先级最高。WorkBuddy 正常路径必须使用 `--resolve-chat --source-query "{用户原始问题}"`，并以来源反查选定的 `chat_id` 作为发送目标。`WORKBUDDY_HOME_CHANNEL_CHAT_ID` 只在来源反查失败时兜底；`FEISHU_CURRENT_CHAT_ID` / `AGENT_CURRENT_CHAT_ID` 等环境变量只作为更低优先级兼容路径，不能覆盖或短路成功反查结果。
 
-3. **反查来源**：`--resolve-chat` 使用 `send_feishu_card.py` 的当前实现为准：用用户原始问题精确搜索最近 15 分钟内的群聊 @Bot 消息和私聊 p2p 消息。群聊 query 去掉 `@Tom` 和首尾空白，私聊直接使用用户输入正文；不要改写、总结或替换成分析标题。
+3. **反查来源**：`--resolve-chat` 使用 `send_feishu_card.py` 的当前实现为准：用 `--source-query` 里的用户原始问题精确搜索最近 15 分钟内的群聊 @Bot 消息和私聊 p2p 消息。`--source-query` 必须来自触发技能的原始消息；群聊文本可去掉 `@Tom` 和首尾空白，私聊直接使用用户输入正文；禁止传分析摘要、关键切片、卡片标题或改写后的问题。
 4. **WorkBuddy 直问兜底**：如果 `--resolve-chat` 未反查到可用来源，但已配置 `WORKBUDDY_HOME_CHANNEL_CHAT_ID`，则将卡片发送到该 home channel 私聊；只有该目标也不存在时，才降级为纯文本 fallback。
 
 5. **当前脚本行为**：
@@ -209,13 +209,14 @@ SQL 构造顺序：
 6. **发送卡片**：
    ```bash
    python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py \
-     --resolve-chat --query "{用户原始问题}" \
+     --resolve-chat --source-query "{用户原始问题}" \
      --resolve-window-minutes 15 \
      --at-sender \
      --quiet-success \
      --title "..." --color "..." --data "..."
    ```
-   - 正常路径必须保留 `--resolve-chat --query`；只要传入 `--resolve-chat`，脚本就必须使用原始问题 + 时间窗反查群聊和私聊来源，并在多命中时选择最新消息，环境变量不得短路发送目标
+   - 正常路径必须保留 `--resolve-chat --source-query`；只要传入 `--resolve-chat`，脚本就必须使用原始问题 + 时间窗反查群聊和私聊来源，并在多命中时选择最新消息，环境变量不得短路发送目标
+   - `--data` 是卡片内容，允许 `{}` 表示无结果卡片；它不参与来源反查，也不能替代 `--source-query`
    - 需要人工指定目标时可传 `--chat "{chat_id}"`
    - 发送脚本退出码为 0 → 视为卡片已发送，当前会话不得再输出诊断结论、摘要、证据、CLS 链接或卡片内容
    - 如果 WorkBuddy/Hermes 宿主强制要求非空最终回复，只输出 `已发送飞书卡片。`，不得附加任何诊断细节

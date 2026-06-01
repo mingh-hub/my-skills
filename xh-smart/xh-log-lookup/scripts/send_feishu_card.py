@@ -12,7 +12,7 @@
 
   # 来源反查兜底：用问题文本搜索群聊 @Bot 或私聊 p2p 消息，自动获取 chat_id
   python3 send_feishu_card.py \
-    --resolve-chat --query "客户手机号13173889286为什么还款失败" \
+    --resolve-chat --source-query "客户手机号13173889286为什么还款失败" \
     --at-sender \
     --title "日志查询结果" \
     --color blue \
@@ -589,15 +589,24 @@ def resolve_send_target(
         return args.chat, "--chat", sender_info, send_meta, None
 
     if args.resolve_chat:
-        if not args.query.strip():
+        source_query = (args.source_query or "").strip()
+        if not source_query:
             return None, "", sender_info, send_meta, {
                 "status": "error",
-                "error": "missing_query",
-                "message": "--resolve-chat 必须传 --query 用户原始问题，禁止无 query 反查来源。",
+                "error": "missing_source_query",
+                "message": (
+                    "--resolve-chat 必须传 --source-query 用户原始问题，"
+                    "禁止用摘要、分析标题或关键切片反查来源。"
+                ),
                 "fallback": "plain_text",
             }
 
-        resolved = resolver(args.query, args.resolve_window_minutes)
+        send_meta.update({
+            "source_query_provided": True,
+            "source_query_length": len(source_query),
+        })
+
+        resolved = resolver(source_query, args.resolve_window_minutes)
         if resolved and not resolved.get("unresolved") and resolved.get("chat_id"):
             chat_id = resolved["chat_id"]
             chat_source = resolved.get("search_strategy") or "--resolve-chat"
@@ -679,7 +688,7 @@ def resolve_send_target(
         "message": (
             "缺少发送目标：请传 --chat，或配置 WORKBUDDY_HOME_CHANNEL_CHAT_ID，"
             "或由 WorkBuddy 注入 FEISHU_CURRENT_CHAT_ID / AGENT_CURRENT_CHAT_ID，"
-            "或显式使用 --resolve-chat --query。"
+            "或显式使用 --resolve-chat --source-query。"
         ),
         "fallback": "plain_text",
     }
@@ -835,9 +844,9 @@ def main():
     parser = argparse.ArgumentParser(description="发送飞书互动卡片")
     parser.add_argument("--chat", default=None, help="飞书会话 chat_id（手动模式，优先级最高）")
     parser.add_argument("--resolve-chat", action="store_true",
-                        help="兜底：自动用 --query 搜索群聊 @Bot 或私聊 p2p 消息获取 chat_id")
-    parser.add_argument("--query", default="",
-                        help="反查搜索词（用户原始问题）")
+                        help="兜底：自动用 --source-query 搜索群聊 @Bot 或私聊 p2p 消息获取 chat_id")
+    parser.add_argument("--source-query", default="",
+                        help="用户原始问题，仅用于 --resolve-chat 来源反查；禁止传摘要或分析标题")
     parser.add_argument("--resolve-window-minutes", type=int, default=15,
                         help="--resolve-chat 精确搜索最近 N 分钟内的群聊 @Bot 或私聊 p2p 消息")
     parser.add_argument("--at-sender", action="store_true",
