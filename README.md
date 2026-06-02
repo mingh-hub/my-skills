@@ -15,9 +15,11 @@ my-skills/
         resolve_workspace.py    # 按项目名自动定位本地源码仓库
         validate_query_anchors.py # 校验 reference 中的查询锚点
         skill_config.py         # 内部共享解析工具
+      tests/                    # Python 单元测试，覆盖 CLS level 解析、卡片 schema 和发送目标选择
       references/
         modules/                # 订单、签约、权益、放款、还款模块 reference
         common/                 # CLS、飞书卡片、Chrome 备用路径等通用 reference
+    xh-notes/                   # skill 构建、需求迭代和问题复盘记录
     xh-sso-access/              # SSO 会话管理 skill
       SKILL.md
       agents/openai.yaml
@@ -34,6 +36,14 @@ my-skills/
 | ---- | ---- | ---- |
 | xh-log-lookup | `xh-smart/xh-log-lookup/` | 日志查询主控，负责意图分类、业务路由、CLS 查询、统计分档、飞书卡片优先输出和纯文本 fallback |
 | xh-sso-access | `xh-smart/xh-sso-access/` | SSO 会话管理，处理 Argus/JANUS/PMP 等内部系统登录态、Cookie 和本地 Chrome 会话 |
+
+`xh-smart/xh-notes/` 不是可触发 skill，而是维护资料：
+
+| 记录 | 说明 |
+| ---- | ---- |
+| `skill-build-dev-notes.md` | 需求迭代和关键变更记录 |
+| `skill-build-bug-notes.md` | 已定位问题、根因和修复方案 |
+| `skill-build-sign-notes.md` | 签约模块业务梳理和建模草稿 |
 
 `xh-log-lookup` 的业务模块不再拆成独立子技能，而是放在 `references/modules/` 下：
 
@@ -56,6 +66,7 @@ my-skills/
 - **来源反查**：飞书卡片默认用用户原始问题 + 最近 15 分钟窗口反查群聊 @Tom 或私聊 p2p 来源；多条相同 query 命中时按 `create_time` 选择最新消息。
 - **WorkBuddy 直问兜底**：如果不是从飞书消息触发、反查不到来源，但配置了 `WORKBUDDY_HOME_CHANNEL_CHAT_ID`，卡片会发送到该 home channel 私聊；未配置时才降级为纯文本。
 - **输出规则**：最终结论优先通过 `send_feishu_card.py --quiet-success` 发送飞书卡片；卡片成功后当前会话静默或只做极短确认，失败、来源缺失或候选详情获取失败时才降级为纯文本 fallback。
+- **卡片 schema**：`send_feishu_card.py --data` 顶层只允许 `summary_fields`、`call_chain`、`log_count`、`table_data`、`analysis`；`log_count > 0` 时必须至少提供一种可渲染内容。
 - **废弃路径**：不再维护 Argus iframe 穿透方案；直接打开完整 CLS URL，WorkBuddy 优先，本地 Chrome 是备用路径。
 
 ## 工具
@@ -63,7 +74,7 @@ my-skills/
 | 工具 | 路径 | 说明 |
 | ---- | ---- | ---- |
 | `cls_query.py` | `xh-smart/xh-log-lookup/scripts/` | 优先通过 CLS HTTP API 查询日志；默认 `--api-limit 500`，用于统计探测和小数据精确统计；必要时输出 WorkBuddy fallback URL，显式选择时才用本地 Chrome/AppleScript |
-| `send_feishu_card.py` | `xh-smart/xh-log-lookup/scripts/` | 发送飞书交互式卡片；支持 `--resolve-chat --query` 来源反查、最近 15 分钟窗口、多命中取最新、WorkBuddy 直问默认私聊兜底、群聊 sender 自动 @、`--quiet-success` 成功静默和纯文本 fallback 状态返回 |
+| `send_feishu_card.py` | `xh-smart/xh-log-lookup/scripts/` | 发送飞书交互式卡片；支持 `--resolve-chat --source-query` 来源反查、最近 15 分钟窗口、多命中取最新、WorkBuddy 直问默认私聊兜底、群聊 sender 自动 @、`--quiet-success` 成功静默和纯文本 fallback 状态返回 |
 | `resolve_workspace.py` | `xh-smart/xh-log-lookup/scripts/` | 按 `XH_WORKSPACE_ROOTS` 和项目名自动定位本地源码仓库，并可更新 `SKILL.md` 服务映射表中的本地路径 |
 | `validate_query_anchors.py` | `xh-smart/xh-log-lookup/scripts/` | 校验业务 reference 中推荐查询的代码锚点是否仍与源码匹配 |
 | `skill_config.py` | `xh-smart/xh-log-lookup/scripts/` | 内部共享解析工具，供其它脚本读取/渲染 `SKILL.md` 服务映射表 |
@@ -96,11 +107,28 @@ python3 xh-smart/xh-log-lookup/scripts/resolve_workspace.py --check
 bash .claude/skills/run-my-skills/smoke.sh
 ```
 
-Smoke 测试会验证现有 Python 工具和 agent 定义：
+Smoke 测试会验证现有 `tools/` Python 工具和 agent 定义：
 
 - 对 `*/tools/*.py` 执行 `--help` 检查（缺依赖标记 SKIP）
-- 对 `cls_query.py` 执行 `--method workbuddy --no-browser` URL 构建验证
-- 对含锚点表的 `SKILL.md` 执行 `validate_query_anchors.py` 校验
 - 对现有 `*/agents/*.yaml` 执行格式校验（当前主要是 `xh-sso-access/agents/openai.yaml`）
 
-新增工具或 reference 后无需修改脚本，测试会按现有目录自动扫描。
+当前 smoke 脚本不会自动扫描 `xh-log-lookup/scripts/`；其中核心解析、卡片 schema 和发送目标选择由下面的单元测试覆盖，其它脚本可按需直接执行 `--help`、`--check` 或 `--json`。新增 `tools/` 或 agent 定义后无需修改脚本，测试会按现有目录自动扫描。
+
+## 单元测试
+
+```bash
+python3 -m unittest discover -s xh-smart/xh-log-lookup/tests
+```
+
+当前单元测试覆盖：
+
+- `cls_query.py` 的日志级别解析和 API 响应解析
+- `send_feishu_card.py` 的发送目标优先级、来源反查兜底、审计记录
+- 飞书卡片 `--data` schema 校验和 CLS 风格字段渲染
+
+## 维护建议
+
+- 修改 `xh-log-lookup/SKILL.md` 的服务映射、来源反查或卡片 schema 后，同步更新本 README 的“当前行为”和“工具”说明。
+- 新增业务模块 reference 时，补充 `references/modules/` 清单；新增复盘资料时，补充 `xh-notes/` 清单。
+- 涉及飞书卡片发送、来源选择、统计完整性或 CLS level 解析的改动，优先补充 `xh-smart/xh-log-lookup/tests/`。
+- 修改查询锚点后，先跑 `validate_query_anchors.py`，确认 reference 与源码仍匹配。
