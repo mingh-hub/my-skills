@@ -49,6 +49,7 @@ DEFAULT_PRIVATE_CHAT_ENV_KEYS = (
     "FEISHU_DEFAULT_PRIVATE_CHAT_ID",
     "AGENT_DEFAULT_PRIVATE_CHAT_ID",
 )
+SEARCH_RETRY_DELAYS = (5, 10, 15)
 
 LEVEL_ICON = {"INFO": "\U0001f7e2", "WARN": "\U0001f7e1", "WARNING": "\U0001f7e1", "ERROR": "\U0001f534"}
 COLOR_MAP = {"red": "red", "yellow": "yellow", "green": "green", "blue": "blue"}
@@ -431,7 +432,8 @@ def parse_cls_raw_text(raw_text):
     return {"call_chain": rows[:20], "log_count": total_count or len(rows)}
 
 
-def _search_messages(query, start, chat_type, at_bot=False, audit=None, source=""):
+def _search_messages(query, start, audit=None, source="mixed",
+                     retry_delays=SEARCH_RETRY_DELAYS, sleep_func=time.sleep):
     parts = [
         "lark-cli im +messages-search",
         "--as user",
@@ -439,31 +441,69 @@ def _search_messages(query, start, chat_type, at_bot=False, audit=None, source="
     escaped_query = query.replace("'", "'\\''")
     parts.append(f"--query '{escaped_query}'")
     parts.extend([
-        f"--chat-type '{chat_type}'",
         f"--start '{start}'",
         "--page-limit 1",
         "--page-size 5",
     ])
-    if at_bot:
-        parts.append(f"--at-chatter-ids '{BOT_OPEN_ID}'")
     cmd = " ".join(parts)
-    result = _lark_run(cmd)
-    data = _load_json_output(result.stdout, result.stderr, "resolve_chat.search")
+    attempts = []
+    delays = tuple(retry_delays or ())
+    data = None
+    result = None
+
+    for index in range(len(delays) + 1):
+        started = time.monotonic()
+        attempt = {
+            "attempt": index + 1,
+            "ok": False,
+            "timeout": False,
+            "returncode": None,
+            "elapsed_ms": 0,
+            "error_summary": "",
+            "stderr_summary": "",
+        }
+        try:
+            result = _lark_run(cmd)
+            attempt["returncode"] = getattr(result, "returncode", 0)
+            data = _load_json_output(result.stdout, result.stderr, "resolve_chat.search")
+            attempt["ok"] = bool(isinstance(data, dict) and data.get("ok") and attempt["returncode"] == 0)
+            if isinstance(data, dict):
+                attempt["error_summary"] = _redact_audit_text(data.get("error"), query, 500)
+            else:
+                attempt["error_summary"] = "parse_failed"
+            attempt["stderr_summary"] = _redact_audit_text(getattr(result, "stderr", ""), query, 500)
+        except subprocess.TimeoutExpired as exc:
+            attempt["timeout"] = True
+            attempt["error_summary"] = "timeout"
+            attempt["stderr_summary"] = _redact_audit_text(getattr(exc, "stderr", ""), query, 500)
+            data = None
+        finally:
+            attempt["elapsed_ms"] = int((time.monotonic() - started) * 1000)
+            attempts.append(attempt)
+
+        if attempt["ok"]:
+            break
+        if index < len(delays):
+            sleep_func(delays[index])
+
     if audit:
         payload = data.get("data", {}) if isinstance(data, dict) else {}
         message_ids = _extract_message_ids(payload) if isinstance(payload, dict) else []
         audit.add_search({
             "source": source,
             "query_length": len(query or ""),
-            "chat_type": chat_type,
-            "at_bot": at_bot,
-            "has_at_chatter_ids": bool(at_bot),
+            "chat_type_filter": "",
+            "at_bot": False,
+            "has_at_chatter_ids": False,
             "uses_sender_type": False,
+            "uses_chat_type_filter": False,
             "start": start,
             "ok": data.get("ok") if isinstance(data, dict) else False,
             "total": payload.get("total") if isinstance(payload, dict) else None,
             "message_ids_count": len(message_ids),
             "message_ids_preview": message_ids[:5],
+            "attempt_count": len(attempts),
+            "attempts": attempts,
             "error_summary": (
                 _redact_audit_text(data.get("error"), query, 500)
                 if isinstance(data, dict) else "parse_failed"
@@ -482,6 +522,50 @@ def _extract_message_ids(search_payload):
             if item.get("message_id")
         ]
     return message_ids
+
+
+def _extract_messages(search_payload):
+    messages = search_payload.get("messages", [])
+    return messages if isinstance(messages, list) else []
+
+
+def _message_needs_detail(msg):
+    if not isinstance(msg, dict):
+        return True
+    if not msg.get("chat_id"):
+        return True
+    chat_type = msg.get("chat_type") or msg.get("chat_type_v2")
+    if chat_type not in ("group", "p2p"):
+        return True
+    if not isinstance(msg.get("sender"), dict) or not msg.get("sender", {}).get("id"):
+        return True
+    if chat_type == "group" and "mentions" not in msg:
+        return True
+    return False
+
+
+def _group_mentions_bot(msg):
+    mentions = msg.get("mentions") if isinstance(msg, dict) else None
+    if not isinstance(mentions, list):
+        return False
+    for mention in mentions:
+        if not isinstance(mention, dict):
+            continue
+        if mention.get("id") == BOT_OPEN_ID:
+            return True
+        if str(mention.get("name", "")).strip().lower() == "tom":
+            return True
+    return False
+
+
+def _candidate_from_message(msg, source, search_order):
+    msg_id = msg.get("message_id", "") if isinstance(msg, dict) else ""
+    return {
+        "msg_id": msg_id,
+        "msg": msg,
+        "source": source,
+        "search_order": search_order,
+    }
 
 
 def _fetch_message_detail(msg_id, audit=None, source=""):
@@ -550,6 +634,17 @@ def _message_time_value(msg):
         try:
             value = int(str(raw_value))
         except (TypeError, ValueError):
+            value = None
+        if value is None:
+            text = str(raw_value).strip()
+            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M:%S%z"):
+                try:
+                    parsed = datetime.strptime(text, fmt)
+                    if parsed.tzinfo is None:
+                        parsed = parsed.replace(tzinfo=timezone(timedelta(hours=8)))
+                    return int(parsed.timestamp() * 1000), key
+                except ValueError:
+                    continue
             continue
         if value < 10_000_000_000:
             value *= 1000
@@ -563,7 +658,7 @@ def _recent_start(minutes):
 
 
 def resolve_chat(query, window_minutes=15, audit=None):
-    """在时间窗内用问题文本精确搜索群聊 @Bot 或私聊 p2p 消息。
+    """在时间窗内用问题文本混合搜索群聊/私聊来源消息。
 
     Returns:
         dict with chat_id, chat_type, sender_open_id, sender_name,
@@ -579,49 +674,81 @@ def resolve_chat(query, window_minutes=15, audit=None):
     start = _recent_start(window_minutes)
     if audit:
         audit.set_context(query, window_minutes, start)
-    searches = [
-        ("group_at_bot", _search_messages(
-            query=query,
-            start=start,
-            chat_type="group",
-            at_bot=True,
-            audit=audit,
-            source="group_at_bot",
-        )),
-        ("p2p", _search_messages(
-            query=query,
-            start=start,
-            chat_type="p2p",
-            at_bot=False,
-            audit=audit,
-            source="p2p",
-        )),
-    ]
+
+    source = "mixed"
+    search_data = _search_messages(
+        query=query,
+        start=start,
+        audit=audit,
+        source=source,
+    )
+    if search_data is None:
+        if audit:
+            audit.set_selection(
+                selected_source="",
+                matched_msg_id="",
+                resolved_chat_id="",
+                resolved_chat_type="",
+                reason="search_failed",
+            )
+        return {
+            "unresolved": True,
+            "error": "search_failed",
+            "matched_count": 0,
+            "search_strategy": f"latest_query_mixed_{window_minutes}m",
+        }
+
+    if not search_data.get("ok"):
+        error_detail = search_data.get("error", "mixed search failed")
+        sys.stderr.write(f"[resolve_chat] mixed search error: {json.dumps(error_detail, ensure_ascii=False)[:500]}\n")
+        if audit:
+            audit.set_selection(
+                selected_source="",
+                matched_msg_id="",
+                resolved_chat_id="",
+                resolved_chat_type="",
+                reason="search_failed",
+            )
+        return {
+            "unresolved": True,
+            "error": "search_failed",
+            "matched_count": 0,
+            "search_strategy": f"latest_query_mixed_{window_minutes}m",
+            "search_error": error_detail,
+        }
+
+    search_payload = search_data.get("data", {})
+    messages = _extract_messages(search_payload)
+    message_ids = _extract_message_ids(search_payload)
     candidates = []
     seen_ids = set()
 
-    for source, search_data in searches:
-        if search_data is None:
-            print(json.dumps({"status": "error", "detail": f"{source} search parse failed"},
-                             ensure_ascii=False), file=sys.stderr)
-            return {}
-
-        if not search_data.get("ok"):
-            error_detail = search_data.get("error", f"{source} search failed")
-            sys.stderr.write(f"[resolve_chat] {source} search error: {json.dumps(error_detail, ensure_ascii=False)[:500]}\n")
-            print(json.dumps({"status": "error", "detail": error_detail},
-                             ensure_ascii=False), file=sys.stderr)
-            return {}
-
-        search_payload = search_data.get("data", {})
-        message_ids = _extract_message_ids(search_payload)
-        source_count = max(len(message_ids), int(search_payload.get("total") or 0))
-        if source_count <= 0:
+    for msg in messages:
+        if not isinstance(msg, dict):
             continue
-        if not message_ids:
-            print(json.dumps({"status": "error", "detail": f"{source} search returned count without message_ids"},
-                             ensure_ascii=False), file=sys.stderr)
-            return {}
+        msg_id = msg.get("message_id") or f"inline:{len(candidates)}"
+        if msg_id in seen_ids:
+            continue
+        seen_ids.add(msg_id)
+        candidates.append(_candidate_from_message(msg, source, len(candidates)))
+
+    if not candidates:
+        source_count = max(len(message_ids), int(search_payload.get("total") or 0))
+        if source_count > 0 and not message_ids:
+            if audit:
+                audit.set_selection(
+                    selected_source="",
+                    matched_msg_id="",
+                    resolved_chat_id="",
+                    resolved_chat_type="",
+                    reason="search_returned_count_without_message_ids",
+                )
+            return {
+                "unresolved": True,
+                "error": "search_returned_count_without_message_ids",
+                "matched_count": 0,
+                "search_strategy": f"latest_query_mixed_{window_minutes}m",
+            }
         for msg_id in message_ids:
             if msg_id not in seen_ids:
                 seen_ids.add(msg_id)
@@ -650,18 +777,27 @@ def resolve_chat(query, window_minutes=15, audit=None):
     detailed_candidates = []
     detail_errors = []
     for candidate in candidates:
-        msg, error_detail = _fetch_message_detail(
-            candidate["msg_id"],
-            audit=audit,
-            source=candidate["source"],
-        )
-        if msg is None:
-            detail_errors.append({
-                "msg_id": candidate["msg_id"],
-                "source": candidate["source"],
-                "error": error_detail,
-            })
-            continue
+        msg = candidate.get("msg")
+        if _message_needs_detail(msg):
+            if not candidate.get("msg_id"):
+                detail_errors.append({
+                    "msg_id": "",
+                    "source": candidate["source"],
+                    "error": "missing_message_id_for_detail_fetch",
+                })
+                continue
+            msg, error_detail = _fetch_message_detail(
+                candidate["msg_id"],
+                audit=audit,
+                source=candidate["source"],
+            )
+            if msg is None:
+                detail_errors.append({
+                    "msg_id": candidate["msg_id"],
+                    "source": candidate["source"],
+                    "error": error_detail,
+                })
+                continue
 
         time_value, time_field = _message_time_value(msg)
         candidate.update({
@@ -689,36 +825,80 @@ def resolve_chat(query, window_minutes=15, audit=None):
             "detail_errors": detail_errors[:3],
         }
 
-    timed_candidates = [c for c in detailed_candidates if c["time_value"] is not None]
+    valid_candidates = []
+    group_candidate_count = 0
+    group_at_bot_count = 0
+    group_filtered_count = 0
+    unsupported_chat_type_count = 0
+    for candidate in detailed_candidates:
+        msg = candidate["msg"]
+        chat_type = msg.get("chat_type") or msg.get("chat_type_v2") or ""
+        if chat_type == "group":
+            group_candidate_count += 1
+            if _group_mentions_bot(msg):
+                group_at_bot_count += 1
+                valid_candidates.append(candidate)
+            else:
+                group_filtered_count += 1
+        elif chat_type == "p2p":
+            valid_candidates.append(candidate)
+        else:
+            unsupported_chat_type_count += 1
+
+    if not valid_candidates:
+        if audit:
+            audit.set_selection(
+                selected_source="",
+                matched_msg_id="",
+                resolved_chat_id="",
+                resolved_chat_type="",
+                reason="no_valid_chat_type_or_group_mention",
+                matched_count=matched_count,
+                group_candidate_count=group_candidate_count,
+                group_at_bot_count=group_at_bot_count,
+                group_filtered_count=group_filtered_count,
+                unsupported_chat_type_count=unsupported_chat_type_count,
+            )
+        return {
+            "unresolved": True,
+            "error": "no_valid_chat_type_or_group_mention",
+            "matched_count": matched_count,
+            "search_strategy": f"latest_query_mixed_{window_minutes}m",
+            "detail_errors": detail_errors[:3],
+            "group_candidate_count": group_candidate_count,
+            "group_at_bot_count": group_at_bot_count,
+            "group_filtered_count": group_filtered_count,
+            "unsupported_chat_type_count": unsupported_chat_type_count,
+        }
+
+    timed_candidates = [c for c in valid_candidates if c["time_value"] is not None]
     if timed_candidates:
         selected = max(timed_candidates, key=lambda c: (c["time_value"], c["search_order"]))
     else:
-        selected = detailed_candidates[0]
+        selected = valid_candidates[0]
 
     msg = selected["msg"]
     source = selected["source"]
-    expected_chat_type = "group" if source == "group_at_bot" else "p2p"
     search_strategy = f"latest_query_{source}_{window_minutes}m"
 
     sender = msg.get("sender", {})
     chat_type = msg.get("chat_type") or msg.get("chat_type_v2") or ""
-    if not chat_type:
-        chat_type = expected_chat_type
-    elif chat_type not in ("group", "p2p"):
-        chat_type = expected_chat_type
 
     result = {
         "chat_id": msg.get("chat_id", ""),
         "chat_type": chat_type,
         "resolved_chat_type": chat_type,
         "sender_open_id": sender.get("id", ""),
-        "sender_name": sender.get("id", ""),
+        "sender_name": sender.get("name") or sender.get("id", ""),
         "matched_msg_id": selected["msg_id"],
         "matched_count": matched_count,
         "search_strategy": search_strategy,
         "selected_time_field": selected.get("time_field", ""),
         "selected_time_value": selected.get("time_value"),
         "detail_errors": detail_errors,
+        "group_candidate_count": group_candidate_count,
+        "group_at_bot_count": group_at_bot_count,
+        "group_filtered_count": group_filtered_count,
     }
     if audit:
         audit.set_selection(
@@ -729,6 +909,10 @@ def resolve_chat(query, window_minutes=15, audit=None):
             matched_count=matched_count,
             selected_time_field=selected.get("time_field", ""),
             selected_time_value=selected.get("time_value"),
+            group_candidate_count=group_candidate_count,
+            group_at_bot_count=group_at_bot_count,
+            group_filtered_count=group_filtered_count,
+            unsupported_chat_type_count=unsupported_chat_type_count,
         )
     return result
 

@@ -36,19 +36,19 @@ disable: false
 
 | serviceName | 项目名 | 别名 | 仓库路径 |
 |----|----|----|----|
-|`order`|`order`|`订单服务,订单`|`/Users/hisense/Documents/workspace/order`|
-|`order-batch`|`order`|`订单服务,订单`|`/Users/hisense/Documents/workspace/order`|
-|`order-batch-timing`|`order`|`订单服务,订单`|`/Users/hisense/Documents/workspace/order`|
-|`h5-loan`|`H5LoanProject`|`借款服务,借款`|`/Users/hisense/Documents/workspace/H5LoanProject`|
-|`protocol`|`protocol`|`协议服务,协议`|`/Users/hisense/Documents/workspace/protocol`|
-|`protocol-batch`|`protocol`|`协议服务,协议`|`/Users/hisense/Documents/workspace/protocol`|
-|`protocol-batch-timing`|`protocol`|`协议服务,协议`|`/Users/hisense/Documents/workspace/protocol`|
-|`cif`|`cif`|`客户信息,客户基础信息,客户信息服务`|`/Users/hisense/Documents/workspace/cif`|
-|`account`|`account`|`账户信息,客户账户信息`|`/Users/hisense/Documents/workspace/account`|
-|`datainquiry`|`data-inquiry`|`数据查询`|`/Users/hisense/Documents/workspace/data-inquiry`|
-|`loki-webapp`|`loki`|`loki,loki放款`|`/Users/hisense/Documents/workspace/loki`|
-|`weixin-h5api`|`weixin_h5api`|-|`/Users/hisense/Documents/workspace/weixin_h5api`|
-|`app-server`|`appServer`|-|`/Users/hisense/Documents/workspace/appServer`|
+|`order`|`order`|`订单服务,订单`|`/Users/user/mingh/workspace/order`|
+|`order-batch`|`order`|`订单服务,订单`|`/Users/user/mingh/workspace/order`|
+|`order-batch-timing`|`order`|`订单服务,订单`|`/Users/user/mingh/workspace/order`|
+|`h5-loan`|`H5LoanProject`|`借款服务,借款`|`/Users/user/mingh/workspace/H5LoanProject`|
+|`protocol`|`protocol`|`协议服务,协议`|`/Users/user/mingh/workspace/protocol`|
+|`protocol-batch`|`protocol`|`协议服务,协议`|`/Users/user/mingh/workspace/protocol`|
+|`protocol-batch-timing`|`protocol`|`协议服务,协议`|`/Users/user/mingh/workspace/protocol`|
+|`cif`|`cif`|`客户信息,客户基础信息,客户信息服务`|`/Users/user/mingh/workspace/cif`|
+|`account`|`account`|`账户信息,客户账户信息`|`/Users/user/mingh/workspace/account`|
+|`datainquiry`|`data-inquiry`|`数据查询`|`/Users/user/mingh/workspace/data-inquiry`|
+|`loki-webapp`|`loki`|`loki,loki放款`|`/Users/user/mingh/workspace/loki`|
+|`weixin-h5api`|`weixin_h5api`|-|`/Users/user/mingh/workspace/weixin_h5api`|
+|`app-server`|`appServer`|-|`/Users/user/mingh/workspace/appServer`|
 
 ## 强制规则
 
@@ -197,13 +197,14 @@ SQL 构造顺序：
 
 2. **来源优先级**：`--chat` 是人工显式指定目标，优先级最高。WorkBuddy 正常路径必须使用 `--resolve-chat --source-query "{用户原始问题}"`，并以来源反查选定的 `chat_id` 作为发送目标。`WORKBUDDY_HOME_CHANNEL_CHAT_ID` 只在来源反查失败时兜底；`FEISHU_CURRENT_CHAT_ID` / `AGENT_CURRENT_CHAT_ID` 等环境变量只作为更低优先级兼容路径，不能覆盖或短路成功反查结果。
 
-3. **反查来源**：`--resolve-chat` 使用 `send_feishu_card.py` 的当前实现为准：用 `--source-query` 里的用户原始问题精确搜索最近 15 分钟内的群聊 @Bot 消息和私聊 p2p 消息。`--source-query` 必须来自触发技能的原始消息；群聊命中只依赖 `--chat-type group + --at-chatter-ids BOT_OPEN_ID`，不再额外加 `--sender-type user`，避免飞书索引延迟；群聊文本可去掉 `@Tom` 和首尾空白，私聊直接使用用户输入正文；禁止传分析摘要、关键切片、卡片标题或改写后的问题。
+3. **反查来源**：`--resolve-chat` 使用 `send_feishu_card.py` 的当前实现为准：用 `--source-query` 里的用户原始问题执行混合消息搜索，不指定 `--chat-type`，再根据返回消息的 `chat_type` 路由。`chat_type=p2p` 时发送到私聊 `chat_id`；`chat_type=group` 时必须二次校验 `mentions` 中包含 `BOT_OPEN_ID` 或 `Tom`，通过后发送到群聊 `chat_id` 并 @ 提问人。`--source-query` 必须来自触发技能的原始消息；禁止传分析摘要、关键切片、卡片标题或改写后的问题。
 4. **WorkBuddy 直问兜底**：如果 `--resolve-chat` 未反查到可用来源，但已配置 `WORKBUDDY_HOME_CHANNEL_CHAT_ID`，则将卡片发送到该 home channel 私聊；只有该目标也不存在时，才降级为纯文本 fallback。
 
 5. **当前脚本行为**：
    - 单一来源命中 0 条 → 搜不到来源；若配置了 `WORKBUDDY_HOME_CHANNEL_CHAT_ID`，发送到该 home channel 私聊，否则 fallback 为当前会话纯文本。
-   - 单一来源或跨来源多命中 → 以 `create_time` 最新的一条作为发送目标。
-   - `messages-mget` 返回的 `chat_type` 缺失或异常时，当前脚本按搜索分支兜底为 `group` 或 `p2p`。
+   - 单一来源或跨来源多命中 → 先过滤无效群聊候选，再以 `create_time/update_time/timestamp` 最新的一条作为发送目标。
+   - 群聊候选必须是 @Tom 的消息；未 @Tom 的同文本群消息只能作为噪声过滤，不能作为发送目标。
+   - 搜索超时、网络错误、解析失败时最多重试 3 次，间隔 5s/10s/15s；仍失败才进入 fallback。
    - 群聊解析到 sender 时会自动 @ 提问者；显式 `--at-sender` 仍可传入，但不是唯一 @ 条件。
 
 6. **发送卡片**：
@@ -219,7 +220,7 @@ SQL 构造顺序：
    - 正常路径必须保留 `--resolve-chat --source-query`；只要传入 `--resolve-chat`，脚本就必须使用原始问题 + 时间窗反查群聊和私聊来源，并在多命中时选择最新消息，环境变量不得短路发送目标
    - 建议保留 `--debug-log-dir "/private/tmp/xh-log-lookup-route"`；当卡片 fallback 到 home channel 时，优先查看审计 JSON 中的 `fallback`、`searches`、`mget` 和 `selection` 定位反查失败原因
    - `--data` 是卡片内容，允许 `{}` 表示无结果卡片；它不参与来源反查，也不能替代 `--source-query`
-   - 需要人工指定目标时可传 `--chat "{chat_id}"`
+   - 需要人工指定目标时可传 `--chat "{chat_id}"`；WorkBuddy 正常自动路径在来源反查失败后禁止改用历史或猜测的 `--chat oc_xxx`
    - 发送脚本退出码为 0 → 视为卡片已发送，当前会话不得再输出诊断结论、摘要、证据、CLS 链接或卡片内容
    - 如果 WorkBuddy/Hermes 宿主强制要求非空最终回复，只输出 `已发送飞书卡片。`，不得附加任何诊断细节
    - 发送脚本非 0 或 `status: "unresolved"` → 当前会话输出飞书兼容纯文本结论，并说明卡片失败原因；如果 `error=missing_private_target`，提示配置 `WORKBUDDY_HOME_CHANNEL_CHAT_ID`
@@ -248,7 +249,7 @@ SQL 构造顺序：
 
 | 关键词 | 业务模块 reference | 业务模块 |
 |--------|---------|--------|
-| 签约、重签、重新签约、RESIGN、SIGNING_ISSUE、协议、绑卡、银行卡签约、代扣协议、支付协议 | `references/modules/sign.md` | 签约模块 |
+| 签约、重签、重新签约、RESIGN、SIGNING_ISSUE、签约协议、支付协议、代扣协议、协议共享、协议号同步、绑卡、银行卡签约 | `references/modules/sign.md` | 签约模块 |
 | 下单、端内（自营）下单、api下单、订单、拦截、反欺诈、借款能力预检、预检、借款试算、试算 | `references/modules/order.md` | 下单模块 |
 | 权益、会员、VIP、优惠券、乐活卡、coupon、尊享卡、拒就赔、加速卡、获额卡、返现券 | `references/modules/benefit.md` | 权益模块 |
 | 放款、资金路由、route、解H、loki放款、拒就赔、提前结清、特项额度 | `references/modules/loan.md` | 放款模块 |
