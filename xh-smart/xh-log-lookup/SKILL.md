@@ -36,19 +36,19 @@ disable: false
 
 | serviceName | 项目名 | 别名 | 仓库路径 |
 |----|----|----|----|
-|`order`|`order`|`订单服务,订单`|`/Users/hisense/Documents/workspace/order`|
-|`order-batch`|`order`|`订单服务,订单`|`/Users/hisense/Documents/workspace/order`|
-|`order-batch-timing`|`order`|`订单服务,订单`|`/Users/hisense/Documents/workspace/order`|
-|`h5-loan`|`H5LoanProject`|`借款服务,借款`|`/Users/hisense/Documents/workspace/H5LoanProject`|
-|`protocol`|`protocol`|`协议服务,协议`|`/Users/hisense/Documents/workspace/protocol`|
-|`protocol-batch`|`protocol`|`协议服务,协议`|`/Users/hisense/Documents/workspace/protocol`|
-|`protocol-batch-timing`|`protocol`|`协议服务,协议`|`/Users/hisense/Documents/workspace/protocol`|
-|`cif`|`cif`|`客户信息,客户基础信息,客户信息服务`|`/Users/hisense/Documents/workspace/cif`|
-|`account`|`account`|`账户信息,客户账户信息`|`/Users/hisense/Documents/workspace/account`|
-|`datainquiry`|`data-inquiry`|`数据查询`|`/Users/hisense/Documents/workspace/data-inquiry`|
-|`loki-webapp`|`loki`|`loki,loki放款`|`/Users/hisense/Documents/workspace/loki`|
-|`weixin-h5api`|`weixin_h5api`|-|`/Users/hisense/Documents/workspace/weixin_h5api`|
-|`app-server`|`appServer`|-|`/Users/hisense/Documents/workspace/appServer`|
+|`order`|`order`|`订单服务,订单`|`/Users/user/mingh/workspace/order`|
+|`order-batch`|`order`|`订单服务,订单`|`/Users/user/mingh/workspace/order`|
+|`order-batch-timing`|`order`|`订单服务,订单`|`/Users/user/mingh/workspace/order`|
+|`h5-loan`|`H5LoanProject`|`借款服务,借款`|`/Users/user/mingh/workspace/H5LoanProject`|
+|`protocol`|`protocol`|`协议服务,协议`|`/Users/user/mingh/workspace/protocol`|
+|`protocol-batch`|`protocol`|`协议服务,协议`|`/Users/user/mingh/workspace/protocol`|
+|`protocol-batch-timing`|`protocol`|`协议服务,协议`|`/Users/user/mingh/workspace/protocol`|
+|`cif`|`cif`|`客户信息,客户基础信息,客户信息服务`|`/Users/user/mingh/workspace/cif`|
+|`account`|`account`|`账户信息,客户账户信息`|`/Users/user/mingh/workspace/account`|
+|`datainquiry`|`data-inquiry`|`数据查询`|`/Users/user/mingh/workspace/data-inquiry`|
+|`loki-webapp`|`loki`|`loki,loki放款`|`/Users/user/mingh/workspace/loki`|
+|`weixin-h5api`|`weixin_h5api`|-|`/Users/user/mingh/workspace/weixin_h5api`|
+|`app-server`|`appServer`|-|`/Users/user/mingh/workspace/appServer`|
 
 ## 强制规则
 
@@ -249,7 +249,7 @@ SQL 构造顺序：
 
 | 关键词 | 业务模块 reference | 业务模块 |
 |--------|---------|--------|
-| 签约、重签、重新签约、RESIGN、SIGNING_ISSUE、协议、绑卡、银行卡签约、代扣协议、支付协议 | `references/modules/sign.md` | 签约模块 |
+| 签约、重签、重新签约、RESIGN、SIGNING_ISSUE、签约协议、支付协议、代扣协议、协议共享、协议号同步、绑卡、银行卡签约 | `references/modules/sign.md` | 签约模块 |
 | 下单、端内（自营）下单、api下单、订单、拦截、反欺诈、借款能力预检、预检、借款试算、试算 | `references/modules/order.md` | 下单模块 |
 | 权益、会员、VIP、优惠券、乐活卡、coupon、尊享卡、拒就赔、加速卡、获额卡、返现券 | `references/modules/benefit.md` | 权益模块 |
 | 放款、资金路由、route、解H、loki放款、拒就赔、提前结清、特项额度 | `references/modules/loan.md` | 放款模块 |
