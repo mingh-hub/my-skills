@@ -4,16 +4,16 @@
 
 ## 自营签约绑卡
 
-业务流程：签约查询 -> 签约申请 -> 签约确认 -> 签约绑卡
-
 ### 业务场景
 
 - 借款签约绑卡
 - 新增签约绑卡
-- 换绑卡
-- 重签约
-- 还款签约绑卡
-- 协议共享
+- 换绑卡/还款签约绑卡（订单/合同纬度）
+- 重签约（客户名下银行卡的纬度）
+
+### 业务流程
+
+签约查询 -> 签约申请 -> 签约确认 -> 签约绑卡 -> 协议共享
 
 ### 核心业务入口
 
@@ -65,16 +65,6 @@ com.xhqb.h5loan.biz.service.controller.AgreementPayController#confirmAndSaveCard
 - 入口日志：`serviceName:"h5-loan" AND message:"[签约绑卡]cid" AND message:"请求" AND message:"{applyId}"`
 - 入参中的`applyId`为`签约申请`返回的`applyId`且不能为空
 
-**签约绑卡**
-签约绑卡或解绑后会发MQ给`loki`，`loki` 接收到协议信息后会通过调资金平台`http`服务进行处理
-发送`loki`MQ：
-
-```java
-com.xhqb.order.biz.service.handle.SharingAgreementLokiQtHandle#sendQToLoki
-```
-
-- 入口日志：`serviceName:"order" AND message:"[协议共享]协议号共享请求loki"`
-
 ## API渠道签约绑卡
 
 ### 业务场景
@@ -85,7 +75,9 @@ com.xhqb.order.biz.service.handle.SharingAgreementLokiQtHandle#sendQToLoki
 - 还款/换卡签约绑卡
 - 快捷绑卡协议通知
 
-业务流程：卡片校验/签约查询 -> 返回未签约渠道 -> 签约申请 -> 短信确认签约 -> 再次卡片校验 -> 落卡/换卡
+### 业务流程
+
+卡片校验/签约查询 -> 返回未签约渠道 -> 签约申请 -> 短信确认签约 -> 再次卡片校验 -> 签约绑卡 -> 协议共享
 
 - API渠道会先调用`inspect`做卡片校验和签约过滤，判断卡是否可用、是否已绑、是否还有未签约渠道
 - 如果存在未签约渠道，`inspect`会返回`needSignCount`和`notSignChannel`，渠道侧拿未签约渠道发起签约申请
@@ -181,3 +173,24 @@ com.xhqb.order.biz.service.impl.SignServiceImpl#notifyProtocol
 - 该链路不再调支付确认，只负责按协议号生成协议MQ
 - `payChannel=baofu`会被转换为`baofu#payChannel`
 - 同一客户同一协议号一分钟内只能通知一次
+
+## 通用业务
+
+**协议共享**
+签约绑卡或解绑后会发MQ给`loki`，`loki` 接收到协议信息后会通过调资金平台`http`服务进行处理。`loanApplyNo`是`order` 发送MQ和`loki` 接收MQ的**桥接键**
+
+`order` 发送MQ：
+
+```java
+com.xhqb.order.biz.service.handle.SharingAgreementLokiQtHandle#sendQToLoki
+```
+
+- 入口日志：`serviceName:"order" AND message:"[协议共享]协议号共享请求loki"`
+
+`loki` 接收MQ：
+
+```java
+com.xhqb.loki.message.tdmq.consumer.SharingAgreementMessageConsumer#sharingAgreementConsumer
+```
+
+- 入口日志：`serviceName:"loki-webapp" AND message:"[协议共享]order推送协议号消息"`，`loanApplyNo`是客户放款成功`loki`的用信流水号
