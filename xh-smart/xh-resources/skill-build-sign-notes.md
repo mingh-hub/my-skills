@@ -13,10 +13,12 @@
 - 换绑卡
 - 重签约
 - 还款签约绑卡
+- 协议共享
 
 ### 核心业务入口
 
 **签约查询**
+
 这个接口主要是根据手机号和银行卡号来查询这张银行卡是否需要签约以及要签哪些渠道，上述业务场景都会先调这个查询判断是否需要签约**
 
 ```java
@@ -33,7 +35,7 @@ com.xhqb.h5loan.biz.service.controller.AgreementPayController#querySignSituation
   - `signInfos.signStatus`：`UNSIGNED`-未签约，`SIGNED`-已签约，`UNWANTED`-不需要签约，`UNSIGNED`-签约失败
 
 **签约申请**
-**根据签约查询返回需要签约`needSign=true`时前端会调这个服务进行签约申请，根据手机号和银行卡号来进行申请**
+根据签约查询返回需要签约`needSign=true`时前端会调这个服务进行签约申请，根据手机号和银行卡号来进行申请
 
 ```java
 com.xhqb.h5loan.biz.service.controller.AgreementPayController#applySign
@@ -43,8 +45,8 @@ com.xhqb.h5loan.biz.service.controller.AgreementPayController#applySign
 - 申请成功`success=true`且`resultCode="SUCCESS_RESPONSE"`
 - `applyId`签约申请ID，下面`签约绑卡`的入参
 
-**签约确认**
-**签约申请成功后，需要客户确认，会调这个接口**
+**协议共享**
+签约申请成功后，需要客户确认，会调这个接口
 
 ```java
 com.xhqb.h5loan.biz.service.controller.AgreementPayController#submitSign
@@ -54,7 +56,7 @@ com.xhqb.h5loan.biz.service.controller.AgreementPayController#submitSign
 - 入参中的`applyId`为`签约申请`返回的`applyId`
 
 **签约绑卡**
-**客户确认后会走签约绑卡的流程**
+客户确认后会走签约绑卡的流程
   
 ```java
 com.xhqb.h5loan.biz.service.controller.AgreementPayController#confirmAndSaveCard
@@ -62,6 +64,16 @@ com.xhqb.h5loan.biz.service.controller.AgreementPayController#confirmAndSaveCard
 
 - 入口日志：`serviceName:"h5-loan" AND message:"[签约绑卡]cid" AND message:"请求" AND message:"{applyId}"`
 - 入参中的`applyId`为`签约申请`返回的`applyId`且不能为空
+
+**签约绑卡**
+签约绑卡或解绑后会发MQ给`loki`，`loki` 接收到协议信息后会通过调资金平台`http`服务进行处理
+发送`loki`MQ：
+
+```java
+com.xhqb.order.biz.service.handle.SharingAgreementLokiQtHandle#sendQToLoki
+```
+
+- 入口日志：`serviceName:"order" AND message:"[协议共享]协议号共享请求loki"`
 
 ## API渠道签约绑卡
 
