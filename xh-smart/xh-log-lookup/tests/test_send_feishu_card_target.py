@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import importlib.util
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -232,7 +233,7 @@ class ResolveSendTargetTest(unittest.TestCase):
 
 
 class SearchMessagesCommandTest(unittest.TestCase):
-    def _capture_search_command(self, chat_type, at_bot):
+    def _capture_search_command(self):
         captured = {}
         original_lark_run = send_feishu_card._lark_run
         try:
@@ -247,26 +248,19 @@ class SearchMessagesCommandTest(unittest.TestCase):
             send_feishu_card._search_messages(
                 query="看下我们组近半小时服务异常情况",
                 start="2026-06-01T10:30:00+08:00",
-                chat_type=chat_type,
-                at_bot=at_bot,
             )
         finally:
             send_feishu_card._lark_run = original_lark_run
         return captured["cmd"]
 
-    def test_group_search_uses_at_bot_without_sender_type(self):
-        cmd = self._capture_search_command(chat_type="group", at_bot=True)
+    def test_mixed_search_omits_chat_type_at_bot_and_sender_type(self):
+        cmd = self._capture_search_command()
 
-        self.assertIn("--chat-type 'group'", cmd)
-        self.assertIn(f"--at-chatter-ids '{send_feishu_card.BOT_OPEN_ID}'", cmd)
-        self.assertNotIn("--sender-type user", cmd)
-
-    def test_p2p_search_omits_at_bot_and_sender_type(self):
-        cmd = self._capture_search_command(chat_type="p2p", at_bot=False)
-
-        self.assertIn("--chat-type 'p2p'", cmd)
+        self.assertNotIn("--chat-type", cmd)
         self.assertNotIn("--at-chatter-ids", cmd)
         self.assertNotIn("--sender-type user", cmd)
+        self.assertIn("--query '看下我们组近半小时服务异常情况'", cmd)
+        self.assertIn("--start '2026-06-01T10:30:00+08:00'", cmd)
 
     def test_search_audit_records_result_summary(self):
         original_lark_run = send_feishu_card._lark_run
@@ -285,20 +279,273 @@ class SearchMessagesCommandTest(unittest.TestCase):
             send_feishu_card._search_messages(
                 query="看下我们组近半小时服务异常情况",
                 start="2026-06-01T10:30:00+08:00",
-                chat_type="group",
-                at_bot=True,
                 audit=audit,
-                source="group_at_bot",
+                source="mixed",
             )
         finally:
             send_feishu_card._lark_run = original_lark_run
 
         search = audit.data["searches"][0]
-        self.assertEqual(search["source"], "group_at_bot")
+        self.assertEqual(search["source"], "mixed")
+        self.assertFalse(search["uses_chat_type_filter"])
         self.assertEqual(search["total"], 2)
         self.assertEqual(search["message_ids_count"], 2)
         self.assertEqual(search["message_ids_preview"], ["om_1", "om_2"])
+        self.assertEqual(search["attempt_count"], 1)
         self.assertNotIn("query", search)
+
+    def test_search_retries_timeout_with_configured_delays(self):
+        original_lark_run = send_feishu_card._lark_run
+        calls = []
+        sleeps = []
+        audit = send_feishu_card.RouteAudit()
+        try:
+            def fake_lark_run(cmd):
+                calls.append(cmd)
+                raise subprocess.TimeoutExpired(cmd, timeout=15)
+
+            send_feishu_card._lark_run = fake_lark_run
+            result = send_feishu_card._search_messages(
+                query="看下我们组近半小时服务异常情况",
+                start="2026-06-01T10:30:00+08:00",
+                audit=audit,
+                sleep_func=sleeps.append,
+            )
+        finally:
+            send_feishu_card._lark_run = original_lark_run
+
+        self.assertIsNone(result)
+        self.assertEqual(len(calls), 4)
+        self.assertEqual(sleeps, [5, 10, 15])
+        search = audit.data["searches"][0]
+        self.assertEqual(search["attempt_count"], 4)
+        self.assertTrue(all(item["timeout"] for item in search["attempts"]))
+
+    def test_search_retry_success_does_not_continue(self):
+        original_lark_run = send_feishu_card._lark_run
+        calls = []
+        sleeps = []
+        try:
+            def fake_lark_run(cmd):
+                calls.append(cmd)
+                if len(calls) < 3:
+                    return SimpleNamespace(
+                        stdout='{"ok": false, "error": {"type": "network"}}',
+                        stderr="",
+                        returncode=4,
+                    )
+                return SimpleNamespace(
+                    stdout='{"ok": true, "data": {"total": 0}}',
+                    stderr="",
+                    returncode=0,
+                )
+
+            send_feishu_card._lark_run = fake_lark_run
+            result = send_feishu_card._search_messages(
+                query="看下我们组近半小时服务异常情况",
+                start="2026-06-01T10:30:00+08:00",
+                sleep_func=sleeps.append,
+            )
+        finally:
+            send_feishu_card._lark_run = original_lark_run
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(sleeps, [5, 10])
+
+
+class ResolveChatMixedSearchTest(unittest.TestCase):
+    def _with_lark_run(self, fake_lark_run, func):
+        original_lark_run = send_feishu_card._lark_run
+        try:
+            send_feishu_card._lark_run = fake_lark_run
+            return func()
+        finally:
+            send_feishu_card._lark_run = original_lark_run
+
+    def test_p2p_message_routes_to_private_chat(self):
+        def fake_lark_run(cmd):
+            return SimpleNamespace(
+                stdout=json.dumps({
+                    "ok": True,
+                    "data": {
+                        "total": 1,
+                        "messages": [{
+                            "message_id": "om_p2p",
+                            "chat_id": "oc_private",
+                            "chat_type": "p2p",
+                            "chat_partner": {"open_id": "ou_partner"},
+                            "sender": {"id": "ou_sender", "name": "明海"},
+                            "content": "看下我们组近一小时异常情况",
+                            "create_time": "2026-06-02 14:46",
+                        }],
+                    },
+                }),
+                stderr="",
+                returncode=0,
+            )
+
+        result = self._with_lark_run(
+            fake_lark_run,
+            lambda: send_feishu_card.resolve_chat("看下我们组近一小时异常情况"),
+        )
+
+        self.assertEqual(result["chat_id"], "oc_private")
+        self.assertEqual(result["resolved_chat_type"], "p2p")
+        self.assertEqual(result["sender_open_id"], "ou_sender")
+        self.assertEqual(result["search_strategy"], "latest_query_mixed_15m")
+
+    def test_group_message_requires_bot_mention(self):
+        def fake_lark_run(cmd):
+            return SimpleNamespace(
+                stdout=json.dumps({
+                    "ok": True,
+                    "data": {
+                        "total": 1,
+                        "messages": [{
+                            "message_id": "om_group",
+                            "chat_id": "oc_group",
+                            "chat_name": "客户订单",
+                            "chat_type": "group",
+                            "sender": {"id": "ou_sender", "name": "李超龙"},
+                            "mentions": [{"id": send_feishu_card.BOT_OPEN_ID, "name": "Tom"}],
+                            "content": "@Tom 看下我们组近一小时异常情况",
+                            "create_time": "2026-06-02 14:46",
+                        }],
+                    },
+                }),
+                stderr="",
+                returncode=0,
+            )
+
+        result = self._with_lark_run(
+            fake_lark_run,
+            lambda: send_feishu_card.resolve_chat("看下我们组近一小时异常情况"),
+        )
+
+        self.assertEqual(result["chat_id"], "oc_group")
+        self.assertEqual(result["resolved_chat_type"], "group")
+        self.assertEqual(result["sender_open_id"], "ou_sender")
+        self.assertEqual(result["sender_name"], "李超龙")
+        self.assertEqual(result["group_at_bot_count"], 1)
+        self.assertEqual(result["group_filtered_count"], 0)
+
+    def test_group_message_without_bot_mention_is_filtered(self):
+        def fake_lark_run(cmd):
+            return SimpleNamespace(
+                stdout=json.dumps({
+                    "ok": True,
+                    "data": {
+                        "total": 1,
+                        "messages": [{
+                            "message_id": "om_group",
+                            "chat_id": "oc_group",
+                            "chat_type": "group",
+                            "sender": {"id": "ou_sender", "name": "李超龙"},
+                            "mentions": [{"id": "ou_other", "name": "别人"}],
+                            "content": "看下我们组近一小时异常情况",
+                            "create_time": "2026-06-02 14:46",
+                        }],
+                    },
+                }),
+                stderr="",
+                returncode=0,
+            )
+
+        result = self._with_lark_run(
+            fake_lark_run,
+            lambda: send_feishu_card.resolve_chat("看下我们组近一小时异常情况"),
+        )
+
+        self.assertTrue(result["unresolved"])
+        self.assertEqual(result["error"], "no_valid_chat_type_or_group_mention")
+        self.assertEqual(result["group_candidate_count"], 1)
+        self.assertEqual(result["group_filtered_count"], 1)
+
+    def test_latest_valid_group_mention_wins(self):
+        def fake_lark_run(cmd):
+            return SimpleNamespace(
+                stdout=json.dumps({
+                    "ok": True,
+                    "data": {
+                        "total": 3,
+                        "messages": [
+                            {
+                                "message_id": "om_old",
+                                "chat_id": "oc_old",
+                                "chat_type": "group",
+                                "sender": {"id": "ou_old"},
+                                "mentions": [{"id": send_feishu_card.BOT_OPEN_ID}],
+                                "create_time": "2026-06-02 14:40",
+                            },
+                            {
+                                "message_id": "om_not_bot",
+                                "chat_id": "oc_noise",
+                                "chat_type": "group",
+                                "sender": {"id": "ou_noise"},
+                                "mentions": [{"id": "ou_other"}],
+                                "create_time": "2026-06-02 14:59",
+                            },
+                            {
+                                "message_id": "om_new",
+                                "chat_id": "oc_new",
+                                "chat_type": "group",
+                                "sender": {"id": "ou_new"},
+                                "mentions": [{"id": send_feishu_card.BOT_OPEN_ID}],
+                                "create_time": "2026-06-02 14:50",
+                            },
+                        ],
+                    },
+                }),
+                stderr="",
+                returncode=0,
+            )
+
+        result = self._with_lark_run(
+            fake_lark_run,
+            lambda: send_feishu_card.resolve_chat("看下我们组近一小时异常情况"),
+        )
+
+        self.assertEqual(result["matched_msg_id"], "om_new")
+        self.assertEqual(result["chat_id"], "oc_new")
+        self.assertEqual(result["group_at_bot_count"], 2)
+        self.assertEqual(result["group_filtered_count"], 1)
+
+    def test_message_ids_fall_back_to_mget_detail(self):
+        calls = []
+
+        def fake_lark_run(cmd):
+            calls.append(cmd)
+            if "+messages-search" in cmd:
+                return SimpleNamespace(
+                    stdout='{"ok": true, "data": {"total": 1, "message_ids": ["om_1"]}}',
+                    stderr="",
+                    returncode=0,
+                )
+            return SimpleNamespace(
+                stdout=json.dumps({
+                    "ok": True,
+                    "data": {
+                        "messages": [{
+                            "message_id": "om_1",
+                            "chat_id": "oc_private",
+                            "chat_type": "p2p",
+                            "sender": {"id": "ou_sender"},
+                            "create_time": "2026-06-02 14:46",
+                        }],
+                    },
+                }),
+                stderr="",
+                returncode=0,
+            )
+
+        result = self._with_lark_run(
+            fake_lark_run,
+            lambda: send_feishu_card.resolve_chat("看下我们组近一小时异常情况"),
+        )
+
+        self.assertEqual(result["chat_id"], "oc_private")
+        self.assertTrue(any("+messages-mget" in cmd for cmd in calls))
 
 
 class RouteAuditTest(unittest.TestCase):
