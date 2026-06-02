@@ -97,7 +97,6 @@ Step 0 使用 `level:"ERROR"` 通用查询，不依赖代码锚点，可直接�
 
 - `references/modules/order/precheck-passed-but-cant-borrow.md`：预检全部通过但客户仍无法借款的排查指南（含guideCheckAbility vs queryOverdueMark差异、还款计划级别逾期盲区）
 - `references/modules/sign.md`：签约、重签约、协议状态专项排查
-- `references/modules/order/re-sign-troubleshooting-20260519.md`：重签约问题排查记录
 - `references/modules/order/t4-withdrawal-threshold.md`：T4 提现门槛规则说明
 - `references/modules/order/antifraud-retry-mechanism.md`：反欺诈重试机制完整说明（代码、日志锚点、CLS 查询、排查路径）
 - `references/modules/order/order-health-check-examples-20260517.md`：健康检查样例
