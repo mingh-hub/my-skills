@@ -10,6 +10,7 @@
 
 ## 意图边界
 
+- **申请前链路**：用户说"借款首页"、"借款内容"、"借款试算"、"预检"、"客户申请借款"、"申请前轨迹"时，默认走 `references/modules/apply.md`；只有确认已经进入正式下单、订单生成、下单拦截或反欺诈后，才回到本模块。
 - **下单链路异常**：用户说"下单异常"、"借款下单异常"、"下单失败"、"下单链路异常"、"下单成功/失败统计"时，默认只统计下单业务链路，主查询必须使用 `serviceName:"order"` 加 `[借款下单]` 稳定日志锚点。不得把 `order` 服务通用 ERROR/WARN、`order-batch` 或 `order-batch-timing` 异常直接汇总成下单异常。
 - **订单服务/订单组异常**：用户说"订单服务异常"、"订单组异常"、"客户订单组健康检查"、"`order-batch`"、"`order-batch-timing`"、"`mqResendJob`"、"服务健康"时，才按服务健康处理，可覆盖 `order`、`order-batch`、`order-batch-timing`，并按主控规则拆分 `ERROR/WARN` 和 `serviceName`。
 - **背景异常分区**：下单链路查询中如额外执行 `serviceName:"order" AND level:"ERROR"`，只能作为"订单服务背景异常"输出；`mqResendJob`、batch/timing 异常默认归为"订单组服务异常"。只有 traceId、orderId 或明确业务证据证明与本次下单链路相关时，才纳入下单链路结论。
@@ -95,6 +96,7 @@ Step 0 使用 `level:"ERROR"` 通用查询，不依赖代码锚点，可直接�
 
 ## References
 
+- `references/modules/apply.md`：借款申请前链路、借款首页、借款内容页、预检、试算和客户行为轨迹
 - `references/modules/order/precheck-passed-but-cant-borrow.md`：预检全部通过但客户仍无法借款的排查指南（含guideCheckAbility vs queryOverdueMark差异、还款计划级别逾期盲区）
 - `references/modules/sign.md`：签约、重签约、协议状态专项排查
 - `references/modules/order/t4-withdrawal-threshold.md`：T4 提现门槛规则说明
