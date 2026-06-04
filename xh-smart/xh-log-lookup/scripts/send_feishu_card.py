@@ -26,6 +26,7 @@
 """
 
 import argparse
+import difflib
 import json
 import os
 import re
@@ -50,6 +51,10 @@ DEFAULT_PRIVATE_CHAT_ENV_KEYS = (
     "AGENT_DEFAULT_PRIVATE_CHAT_ID",
 )
 SEARCH_RETRY_DELAYS = (5, 10, 15)
+AT_TOM_FALLBACK_PAGE_LIMIT = 5
+AT_TOM_FALLBACK_PAGE_SIZE = 10
+AT_TOM_FALLBACK_SIMILARITY_THRESHOLD = 0.72
+AT_TOM_FALLBACK_SIMILARITY_EPSILON = 0.01
 
 LEVEL_ICON = {"INFO": "\U0001f7e2", "WARN": "\U0001f7e1", "WARNING": "\U0001f7e1", "ERROR": "\U0001f534"}
 COLOR_MAP = {"red": "red", "yellow": "yellow", "green": "green", "blue": "blue"}
@@ -433,7 +438,8 @@ def parse_cls_raw_text(raw_text):
 
 
 def _search_messages(query, start, audit=None, source="mixed",
-                     retry_delays=SEARCH_RETRY_DELAYS, sleep_func=time.sleep):
+                     retry_delays=SEARCH_RETRY_DELAYS, sleep_func=time.sleep,
+                     page_limit=1, page_size=5):
     parts = [
         "lark-cli im +messages-search",
         "--as user",
@@ -442,8 +448,8 @@ def _search_messages(query, start, audit=None, source="mixed",
     parts.append(f"--query '{escaped_query}'")
     parts.extend([
         f"--start '{start}'",
-        "--page-limit 1",
-        "--page-size 5",
+        f"--page-limit {page_limit}",
+        f"--page-size {page_size}",
     ])
     cmd = " ".join(parts)
     attempts = []
@@ -497,6 +503,8 @@ def _search_messages(query, start, audit=None, source="mixed",
             "has_at_chatter_ids": False,
             "uses_sender_type": False,
             "uses_chat_type_filter": False,
+            "page_limit": page_limit,
+            "page_size": page_size,
             "start": start,
             "ok": data.get("ok") if isinstance(data, dict) else False,
             "total": payload.get("total") if isinstance(payload, dict) else None,
@@ -568,6 +576,39 @@ def _candidate_from_message(msg, source, search_order):
     }
 
 
+def _candidates_from_search_payload(search_payload, source):
+    messages = _extract_messages(search_payload)
+    message_ids = _extract_message_ids(search_payload)
+    candidates = []
+    seen_ids = set()
+
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        msg_id = msg.get("message_id") or f"inline:{len(candidates)}"
+        if msg_id in seen_ids:
+            continue
+        seen_ids.add(msg_id)
+        candidates.append(_candidate_from_message(msg, source, len(candidates)))
+
+    if candidates:
+        return candidates, ""
+
+    source_count = max(len(message_ids), int(search_payload.get("total") or 0))
+    if source_count > 0 and not message_ids:
+        return [], "search_returned_count_without_message_ids"
+
+    for msg_id in message_ids:
+        if msg_id not in seen_ids:
+            seen_ids.add(msg_id)
+            candidates.append({
+                "msg_id": msg_id,
+                "source": source,
+                "search_order": len(candidates),
+            })
+    return candidates, ""
+
+
 def _fetch_message_detail(msg_id, audit=None, source=""):
     cmd = f"lark-cli im +messages-mget --message-ids '{msg_id}' --as bot"
     detail_result = _lark_run(cmd)
@@ -623,6 +664,308 @@ def _fetch_message_detail(msg_id, audit=None, source=""):
             "timestamp": msg.get("timestamp", ""),
         })
     return msg, ""
+
+
+def _detail_candidates(candidates, audit=None):
+    detailed_candidates = []
+    detail_errors = []
+    for candidate in candidates:
+        msg = candidate.get("msg")
+        if _message_needs_detail(msg):
+            if not candidate.get("msg_id"):
+                detail_errors.append({
+                    "msg_id": "",
+                    "source": candidate["source"],
+                    "error": "missing_message_id_for_detail_fetch",
+                })
+                continue
+            msg, error_detail = _fetch_message_detail(
+                candidate["msg_id"],
+                audit=audit,
+                source=candidate["source"],
+            )
+            if msg is None:
+                detail_errors.append({
+                    "msg_id": candidate["msg_id"],
+                    "source": candidate["source"],
+                    "error": error_detail,
+                })
+                continue
+
+        time_value, time_field = _message_time_value(msg)
+        candidate.update({
+            "msg": msg,
+            "time_value": time_value,
+            "time_field": time_field,
+        })
+        detailed_candidates.append(candidate)
+    return detailed_candidates, detail_errors
+
+
+def _valid_source_candidates(detailed_candidates, allow_p2p=True):
+    valid_candidates = []
+    group_candidate_count = 0
+    group_at_bot_count = 0
+    group_filtered_count = 0
+    unsupported_chat_type_count = 0
+    for candidate in detailed_candidates:
+        msg = candidate["msg"]
+        chat_type = msg.get("chat_type") or msg.get("chat_type_v2") or ""
+        if chat_type == "group":
+            group_candidate_count += 1
+            if _group_mentions_bot(msg):
+                group_at_bot_count += 1
+                valid_candidates.append(candidate)
+            else:
+                group_filtered_count += 1
+        elif chat_type == "p2p" and allow_p2p:
+            valid_candidates.append(candidate)
+        else:
+            unsupported_chat_type_count += 1
+    return (
+        valid_candidates,
+        group_candidate_count,
+        group_at_bot_count,
+        group_filtered_count,
+        unsupported_chat_type_count,
+    )
+
+
+def _select_latest_candidate(valid_candidates):
+    timed_candidates = [c for c in valid_candidates if c["time_value"] is not None]
+    if timed_candidates:
+        return max(timed_candidates, key=lambda c: (c["time_value"], c["search_order"]))
+    return valid_candidates[0]
+
+
+def _message_text_value(value):
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return ""
+        try:
+            parsed = json.loads(text)
+        except Exception:
+            return text
+        return _message_text_value(parsed)
+    if isinstance(value, dict):
+        parts = []
+        for key in ("text", "content", "title"):
+            if key in value:
+                parts.append(_message_text_value(value.get(key)))
+        for item in value.values():
+            if isinstance(item, (dict, list)):
+                parts.append(_message_text_value(item))
+        return " ".join(part for part in parts if part)
+    if isinstance(value, list):
+        return " ".join(_message_text_value(item) for item in value)
+    return str(value)
+
+
+def _message_content_text(msg):
+    if not isinstance(msg, dict):
+        return ""
+    for key in ("content", "text", "body"):
+        text = _message_text_value(msg.get(key))
+        if text:
+            return text
+    return ""
+
+
+def _normalize_route_text(text):
+    text = str(text or "")
+    text = re.sub(r'<at\b[^>]*>.*?</at>', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'[@＠]\s*tom\b', '', text, flags=re.IGNORECASE)
+    text = text.lower()
+    return re.sub(r'[^0-9a-z\u4e00-\u9fff]+', '', text)
+
+
+def _route_similarity(source_query, msg):
+    expected = _normalize_route_text(source_query)
+    actual = _normalize_route_text(_message_content_text(msg))
+    if not expected or not actual:
+        return 0.0
+    return difflib.SequenceMatcher(None, expected, actual).ratio()
+
+
+def _result_from_selected_candidate(
+    selected,
+    matched_count,
+    detail_errors,
+    group_candidate_count,
+    group_at_bot_count,
+    group_filtered_count,
+    unsupported_chat_type_count,
+    window_minutes,
+    audit=None,
+    similarity_score=None,
+    valid_candidate_count=None,
+):
+    msg = selected["msg"]
+    source = selected["source"]
+    search_strategy = f"latest_query_{source}_{window_minutes}m"
+    sender = msg.get("sender", {})
+    chat_type = msg.get("chat_type") or msg.get("chat_type_v2") or ""
+
+    result = {
+        "chat_id": msg.get("chat_id", ""),
+        "chat_type": chat_type,
+        "resolved_chat_type": chat_type,
+        "sender_open_id": sender.get("id", ""),
+        "sender_name": sender.get("name") or sender.get("id", ""),
+        "matched_msg_id": selected["msg_id"],
+        "matched_count": matched_count,
+        "search_strategy": search_strategy,
+        "selected_time_field": selected.get("time_field", ""),
+        "selected_time_value": selected.get("time_value"),
+        "detail_errors": detail_errors,
+        "group_candidate_count": group_candidate_count,
+        "group_at_bot_count": group_at_bot_count,
+        "group_filtered_count": group_filtered_count,
+    }
+    if similarity_score is not None:
+        result["similarity_score"] = similarity_score
+    if valid_candidate_count is not None:
+        result["valid_candidate_count"] = valid_candidate_count
+
+    if audit:
+        audit_selection = {
+            "selected_source": source,
+            "matched_msg_id": selected["msg_id"],
+            "resolved_chat_id": result["chat_id"],
+            "resolved_chat_type": chat_type,
+            "matched_count": matched_count,
+            "selected_time_field": selected.get("time_field", ""),
+            "selected_time_value": selected.get("time_value"),
+            "group_candidate_count": group_candidate_count,
+            "group_at_bot_count": group_at_bot_count,
+            "group_filtered_count": group_filtered_count,
+            "unsupported_chat_type_count": unsupported_chat_type_count,
+        }
+        if similarity_score is not None:
+            audit_selection["highest_similarity"] = round(similarity_score, 4)
+        if valid_candidate_count is not None:
+            audit_selection["valid_candidate_count"] = valid_candidate_count
+        audit.set_selection(**audit_selection)
+    return result
+
+
+def _resolve_at_tom_fallback(query, start, window_minutes, audit=None):
+    source = "mixed_at_tom_fallback"
+    search_data = _search_messages(
+        query="@Tom",
+        start=start,
+        audit=audit,
+        source=source,
+        page_limit=AT_TOM_FALLBACK_PAGE_LIMIT,
+        page_size=AT_TOM_FALLBACK_PAGE_SIZE,
+    )
+    search_strategy = f"latest_query_{source}_{window_minutes}m"
+    candidate_limit = AT_TOM_FALLBACK_PAGE_LIMIT * AT_TOM_FALLBACK_PAGE_SIZE
+
+    def unresolved(error, **extra):
+        if audit:
+            audit.set_selection(
+                selected_source=source,
+                matched_msg_id="",
+                resolved_chat_id="",
+                resolved_chat_type="",
+                reason=error,
+                fallback_candidate_limit=candidate_limit,
+                **extra,
+            )
+        return {
+            "unresolved": True,
+            "error": error,
+            "matched_count": extra.get("matched_count", 0),
+            "search_strategy": search_strategy,
+            **extra,
+        }
+
+    if search_data is None:
+        return unresolved("at_tom_fallback_search_failed")
+    if not search_data.get("ok"):
+        return unresolved(
+            "at_tom_fallback_search_failed",
+            search_error=search_data.get("error", "fallback search failed"),
+        )
+
+    search_payload = search_data.get("data", {})
+    candidates, candidate_error = _candidates_from_search_payload(search_payload, source)
+    if candidate_error:
+        return unresolved(candidate_error)
+    if not candidates:
+        return unresolved("at_tom_fallback_no_candidates")
+
+    matched_count = len(candidates)
+    detailed_candidates, detail_errors = _detail_candidates(candidates, audit=audit)
+    if not detailed_candidates:
+        sys.stderr.write(f"[resolve_chat] @Tom fallback mget error: {json.dumps(detail_errors[:3], ensure_ascii=False)[:500]}\n")
+        return unresolved(
+            "at_tom_fallback_detail_fetch_failed",
+            matched_count=matched_count,
+            detail_errors=detail_errors[:3],
+        )
+
+    (
+        valid_candidates,
+        group_candidate_count,
+        group_at_bot_count,
+        group_filtered_count,
+        unsupported_chat_type_count,
+    ) = _valid_source_candidates(detailed_candidates, allow_p2p=False)
+
+    if not valid_candidates:
+        return unresolved(
+            "at_tom_fallback_no_valid_group_mention",
+            matched_count=matched_count,
+            detail_errors=detail_errors[:3],
+            group_candidate_count=group_candidate_count,
+            group_at_bot_count=group_at_bot_count,
+            group_filtered_count=group_filtered_count,
+            unsupported_chat_type_count=unsupported_chat_type_count,
+        )
+
+    scored = []
+    for candidate in valid_candidates:
+        score = _route_similarity(query, candidate["msg"])
+        candidate["similarity_score"] = score
+        scored.append((score, candidate))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    best_score, selected = scored[0]
+    second_score = scored[1][0] if len(scored) > 1 else None
+
+    if best_score < AT_TOM_FALLBACK_SIMILARITY_THRESHOLD:
+        return unresolved(
+            "at_tom_fallback_low_similarity",
+            matched_count=matched_count,
+            valid_candidate_count=len(valid_candidates),
+            highest_similarity=round(best_score, 4),
+        )
+    if second_score is not None and (best_score - second_score) <= AT_TOM_FALLBACK_SIMILARITY_EPSILON:
+        return unresolved(
+            "at_tom_fallback_ambiguous_similarity",
+            matched_count=matched_count,
+            valid_candidate_count=len(valid_candidates),
+            highest_similarity=round(best_score, 4),
+            second_similarity=round(second_score, 4),
+        )
+
+    return _result_from_selected_candidate(
+        selected=selected,
+        matched_count=matched_count,
+        detail_errors=detail_errors,
+        group_candidate_count=group_candidate_count,
+        group_at_bot_count=group_at_bot_count,
+        group_filtered_count=group_filtered_count,
+        unsupported_chat_type_count=unsupported_chat_type_count,
+        window_minutes=window_minutes,
+        audit=audit,
+        similarity_score=best_score,
+        valid_candidate_count=len(valid_candidates),
+    )
 
 
 def _message_time_value(msg):
@@ -718,47 +1061,27 @@ def resolve_chat(query, window_minutes=15, audit=None):
         }
 
     search_payload = search_data.get("data", {})
-    messages = _extract_messages(search_payload)
-    message_ids = _extract_message_ids(search_payload)
-    candidates = []
-    seen_ids = set()
-
-    for msg in messages:
-        if not isinstance(msg, dict):
-            continue
-        msg_id = msg.get("message_id") or f"inline:{len(candidates)}"
-        if msg_id in seen_ids:
-            continue
-        seen_ids.add(msg_id)
-        candidates.append(_candidate_from_message(msg, source, len(candidates)))
+    candidates, candidate_error = _candidates_from_search_payload(search_payload, source)
 
     if not candidates:
-        source_count = max(len(message_ids), int(search_payload.get("total") or 0))
-        if source_count > 0 and not message_ids:
+        if candidate_error:
             if audit:
                 audit.set_selection(
                     selected_source="",
                     matched_msg_id="",
                     resolved_chat_id="",
                     resolved_chat_type="",
-                    reason="search_returned_count_without_message_ids",
+                    reason=candidate_error,
                 )
             return {
                 "unresolved": True,
-                "error": "search_returned_count_without_message_ids",
+                "error": candidate_error,
                 "matched_count": 0,
                 "search_strategy": f"latest_query_mixed_{window_minutes}m",
             }
-        for msg_id in message_ids:
-            if msg_id not in seen_ids:
-                seen_ids.add(msg_id)
-                candidates.append({
-                    "msg_id": msg_id,
-                    "source": source,
-                    "search_order": len(candidates),
-                })
-
-    if not candidates:
+        fallback_result = _resolve_at_tom_fallback(query, start, window_minutes, audit=audit)
+        if fallback_result:
+            return fallback_result
         if audit:
             audit.set_selection(
                 selected_source="",
@@ -774,38 +1097,7 @@ def resolve_chat(query, window_minutes=15, audit=None):
         }
     matched_count = len(candidates)
 
-    detailed_candidates = []
-    detail_errors = []
-    for candidate in candidates:
-        msg = candidate.get("msg")
-        if _message_needs_detail(msg):
-            if not candidate.get("msg_id"):
-                detail_errors.append({
-                    "msg_id": "",
-                    "source": candidate["source"],
-                    "error": "missing_message_id_for_detail_fetch",
-                })
-                continue
-            msg, error_detail = _fetch_message_detail(
-                candidate["msg_id"],
-                audit=audit,
-                source=candidate["source"],
-            )
-            if msg is None:
-                detail_errors.append({
-                    "msg_id": candidate["msg_id"],
-                    "source": candidate["source"],
-                    "error": error_detail,
-                })
-                continue
-
-        time_value, time_field = _message_time_value(msg)
-        candidate.update({
-            "msg": msg,
-            "time_value": time_value,
-            "time_field": time_field,
-        })
-        detailed_candidates.append(candidate)
+    detailed_candidates, detail_errors = _detail_candidates(candidates, audit=audit)
 
     if not detailed_candidates:
         sys.stderr.write(f"[resolve_chat] mget error: {json.dumps(detail_errors[:3], ensure_ascii=False)[:500]}\n")
@@ -825,25 +1117,13 @@ def resolve_chat(query, window_minutes=15, audit=None):
             "detail_errors": detail_errors[:3],
         }
 
-    valid_candidates = []
-    group_candidate_count = 0
-    group_at_bot_count = 0
-    group_filtered_count = 0
-    unsupported_chat_type_count = 0
-    for candidate in detailed_candidates:
-        msg = candidate["msg"]
-        chat_type = msg.get("chat_type") or msg.get("chat_type_v2") or ""
-        if chat_type == "group":
-            group_candidate_count += 1
-            if _group_mentions_bot(msg):
-                group_at_bot_count += 1
-                valid_candidates.append(candidate)
-            else:
-                group_filtered_count += 1
-        elif chat_type == "p2p":
-            valid_candidates.append(candidate)
-        else:
-            unsupported_chat_type_count += 1
+    (
+        valid_candidates,
+        group_candidate_count,
+        group_at_bot_count,
+        group_filtered_count,
+        unsupported_chat_type_count,
+    ) = _valid_source_candidates(detailed_candidates, allow_p2p=True)
 
     if not valid_candidates:
         if audit:
@@ -871,50 +1151,18 @@ def resolve_chat(query, window_minutes=15, audit=None):
             "unsupported_chat_type_count": unsupported_chat_type_count,
         }
 
-    timed_candidates = [c for c in valid_candidates if c["time_value"] is not None]
-    if timed_candidates:
-        selected = max(timed_candidates, key=lambda c: (c["time_value"], c["search_order"]))
-    else:
-        selected = valid_candidates[0]
-
-    msg = selected["msg"]
-    source = selected["source"]
-    search_strategy = f"latest_query_{source}_{window_minutes}m"
-
-    sender = msg.get("sender", {})
-    chat_type = msg.get("chat_type") or msg.get("chat_type_v2") or ""
-
-    result = {
-        "chat_id": msg.get("chat_id", ""),
-        "chat_type": chat_type,
-        "resolved_chat_type": chat_type,
-        "sender_open_id": sender.get("id", ""),
-        "sender_name": sender.get("name") or sender.get("id", ""),
-        "matched_msg_id": selected["msg_id"],
-        "matched_count": matched_count,
-        "search_strategy": search_strategy,
-        "selected_time_field": selected.get("time_field", ""),
-        "selected_time_value": selected.get("time_value"),
-        "detail_errors": detail_errors,
-        "group_candidate_count": group_candidate_count,
-        "group_at_bot_count": group_at_bot_count,
-        "group_filtered_count": group_filtered_count,
-    }
-    if audit:
-        audit.set_selection(
-            selected_source=source,
-            matched_msg_id=selected["msg_id"],
-            resolved_chat_id=result["chat_id"],
-            resolved_chat_type=chat_type,
-            matched_count=matched_count,
-            selected_time_field=selected.get("time_field", ""),
-            selected_time_value=selected.get("time_value"),
-            group_candidate_count=group_candidate_count,
-            group_at_bot_count=group_at_bot_count,
-            group_filtered_count=group_filtered_count,
-            unsupported_chat_type_count=unsupported_chat_type_count,
-        )
-    return result
+    selected = _select_latest_candidate(valid_candidates)
+    return _result_from_selected_candidate(
+        selected=selected,
+        matched_count=matched_count,
+        detail_errors=detail_errors,
+        group_candidate_count=group_candidate_count,
+        group_at_bot_count=group_at_bot_count,
+        group_filtered_count=group_filtered_count,
+        unsupported_chat_type_count=unsupported_chat_type_count,
+        window_minutes=window_minutes,
+        audit=audit,
+    )
 
 
 def _source_resolution_meta(resolved, fallback, env_key=""):

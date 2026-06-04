@@ -261,6 +261,34 @@ class SearchMessagesCommandTest(unittest.TestCase):
         self.assertNotIn("--sender-type user", cmd)
         self.assertIn("--query '看下我们组近半小时服务异常情况'", cmd)
         self.assertIn("--start '2026-06-01T10:30:00+08:00'", cmd)
+        self.assertIn("--page-limit 1", cmd)
+        self.assertIn("--page-size 5", cmd)
+
+    def test_search_supports_custom_page_limits(self):
+        captured = {}
+        original_lark_run = send_feishu_card._lark_run
+        try:
+            def fake_lark_run(cmd):
+                captured["cmd"] = cmd
+                return SimpleNamespace(
+                    stdout='{"ok": true, "data": {"total": 0}}',
+                    stderr="",
+                    returncode=0,
+                )
+
+            send_feishu_card._lark_run = fake_lark_run
+            send_feishu_card._search_messages(
+                query="@Tom",
+                start="2026-06-01T10:30:00+08:00",
+                page_limit=5,
+                page_size=10,
+            )
+        finally:
+            send_feishu_card._lark_run = original_lark_run
+
+        self.assertIn("--query '@Tom'", captured["cmd"])
+        self.assertIn("--page-limit 5", captured["cmd"])
+        self.assertIn("--page-size 10", captured["cmd"])
 
     def test_search_audit_records_result_summary(self):
         original_lark_run = send_feishu_card._lark_run
@@ -546,6 +574,184 @@ class ResolveChatMixedSearchTest(unittest.TestCase):
 
         self.assertEqual(result["chat_id"], "oc_private")
         self.assertTrue(any("+messages-mget" in cmd for cmd in calls))
+
+    def test_at_tom_fallback_routes_by_similarity_after_full_query_miss(self):
+        calls = []
+        source_query = "测试环境 traceId:038490bf1f18b2f8 ,order应用 ,分支:release-5.821.0 ,分析异常原因"
+
+        def fake_lark_run(cmd):
+            calls.append(cmd)
+            if "+messages-search" in cmd and "--query '@Tom'" not in cmd:
+                return SimpleNamespace(
+                    stdout='{"ok": true, "data": {"total": 0}}',
+                    stderr="",
+                    returncode=0,
+                )
+            return SimpleNamespace(
+                stdout=json.dumps({
+                    "ok": True,
+                    "data": {
+                        "total": 1,
+                        "messages": [{
+                            "message_id": "om_group",
+                            "chat_id": "oc_group",
+                            "chat_type": "group",
+                            "sender": {"id": "ou_sender", "name": "刘波"},
+                            "mentions": [{"id": send_feishu_card.BOT_OPEN_ID, "name": "Tom"}],
+                            "content": "@Tom " + source_query,
+                            "create_time": "2026-06-04 18:22",
+                        }],
+                    },
+                }),
+                stderr="",
+                returncode=0,
+            )
+
+        result = self._with_lark_run(
+            fake_lark_run,
+            lambda: send_feishu_card.resolve_chat(source_query),
+        )
+
+        self.assertEqual(result["chat_id"], "oc_group")
+        self.assertEqual(result["matched_msg_id"], "om_group")
+        self.assertEqual(result["search_strategy"], "latest_query_mixed_at_tom_fallback_15m")
+        self.assertGreaterEqual(result["similarity_score"], 0.99)
+        self.assertTrue(any("--query '@Tom'" in cmd and "--page-limit 5" in cmd for cmd in calls))
+
+    def test_at_tom_fallback_prefers_similarity_over_latest_message(self):
+        source_query = "测试环境 traceId:038490bf1f18b2f8 ,order应用 ,分支:release-5.821.0 ,分析异常原因A"
+
+        def fake_lark_run(cmd):
+            if "+messages-search" in cmd and "--query '@Tom'" not in cmd:
+                return SimpleNamespace(
+                    stdout='{"ok": true, "data": {"total": 0}}',
+                    stderr="",
+                    returncode=0,
+                )
+            return SimpleNamespace(
+                stdout=json.dumps({
+                    "ok": True,
+                    "data": {
+                        "total": 2,
+                        "messages": [
+                            {
+                                "message_id": "om_new_but_less_similar",
+                                "chat_id": "oc_new",
+                                "chat_type": "group",
+                                "sender": {"id": "ou_new"},
+                                "mentions": [{"id": send_feishu_card.BOT_OPEN_ID}],
+                                "content": "@Tom 测试环境 traceId:038490bf1f18b2f8 ,order应用 ,分支:release-5.821.0 ,分析异常原因B",
+                                "create_time": "2026-06-04 18:23",
+                            },
+                            {
+                                "message_id": "om_old_exact",
+                                "chat_id": "oc_old",
+                                "chat_type": "group",
+                                "sender": {"id": "ou_old"},
+                                "mentions": [{"id": send_feishu_card.BOT_OPEN_ID}],
+                                "content": "@Tom " + source_query,
+                                "create_time": "2026-06-04 18:22",
+                            },
+                        ],
+                    },
+                }),
+                stderr="",
+                returncode=0,
+            )
+
+        result = self._with_lark_run(
+            fake_lark_run,
+            lambda: send_feishu_card.resolve_chat(source_query),
+        )
+
+        self.assertEqual(result["matched_msg_id"], "om_old_exact")
+        self.assertEqual(result["chat_id"], "oc_old")
+
+    def test_at_tom_fallback_filters_group_without_bot_mention(self):
+        def fake_lark_run(cmd):
+            if "+messages-search" in cmd and "--query '@Tom'" not in cmd:
+                return SimpleNamespace(
+                    stdout='{"ok": true, "data": {"total": 0}}',
+                    stderr="",
+                    returncode=0,
+                )
+            return SimpleNamespace(
+                stdout=json.dumps({
+                    "ok": True,
+                    "data": {
+                        "total": 1,
+                        "messages": [{
+                            "message_id": "om_noise",
+                            "chat_id": "oc_noise",
+                            "chat_type": "group",
+                            "sender": {"id": "ou_noise"},
+                            "mentions": [{"id": "ou_other", "name": "别人"}],
+                            "content": "@Tom 看下这个 traceId",
+                            "create_time": "2026-06-04 18:22",
+                        }],
+                    },
+                }),
+                stderr="",
+                returncode=0,
+            )
+
+        result = self._with_lark_run(
+            fake_lark_run,
+            lambda: send_feishu_card.resolve_chat("看下这个 traceId"),
+        )
+
+        self.assertTrue(result["unresolved"])
+        self.assertEqual(result["error"], "at_tom_fallback_no_valid_group_mention")
+        self.assertEqual(result["group_filtered_count"], 1)
+
+    def test_at_tom_fallback_rejects_ambiguous_similarity(self):
+        source_query = "测试环境 traceId:038490bf1f18b2f8 分析异常原因"
+
+        def fake_lark_run(cmd):
+            if "+messages-search" in cmd and "--query '@Tom'" not in cmd:
+                return SimpleNamespace(
+                    stdout='{"ok": true, "data": {"total": 0}}',
+                    stderr="",
+                    returncode=0,
+                )
+            return SimpleNamespace(
+                stdout=json.dumps({
+                    "ok": True,
+                    "data": {
+                        "total": 2,
+                        "messages": [
+                            {
+                                "message_id": "om_1",
+                                "chat_id": "oc_1",
+                                "chat_type": "group",
+                                "sender": {"id": "ou_1"},
+                                "mentions": [{"id": send_feishu_card.BOT_OPEN_ID}],
+                                "content": "@Tom " + source_query,
+                                "create_time": "2026-06-04 18:21",
+                            },
+                            {
+                                "message_id": "om_2",
+                                "chat_id": "oc_2",
+                                "chat_type": "group",
+                                "sender": {"id": "ou_2"},
+                                "mentions": [{"id": send_feishu_card.BOT_OPEN_ID}],
+                                "content": "@Tom " + source_query,
+                                "create_time": "2026-06-04 18:22",
+                            },
+                        ],
+                    },
+                }),
+                stderr="",
+                returncode=0,
+            )
+
+        result = self._with_lark_run(
+            fake_lark_run,
+            lambda: send_feishu_card.resolve_chat(source_query),
+        )
+
+        self.assertTrue(result["unresolved"])
+        self.assertEqual(result["error"], "at_tom_fallback_ambiguous_similarity")
 
 
 class RouteAuditTest(unittest.TestCase):

@@ -2,6 +2,7 @@
 
 |时间|问题描述|根因分析|解决方案|
 |------|------|------|------|
+|2026-06-04 21:01|群聊 @Tom 后卡片发到 HOME_CHANNEL 私聊|`send_feishu_card.py --resolve-chat` 只用完整 `source_query` 执行一次 `messages-search`；长文本混合 `traceId`、分支号、英文/数字/标点时飞书搜索分词可能返回 0 条，触发 `WORKBUDDY_HOME_CHANNEL_CHAT_ID` fallback|完整原始问题搜索 0 命中时，增加 `@Tom` 候选池 fallback：最近窗口最多拉 50 条 @Tom 群聊候选，仍校验 `mentions` 包含 Tom/BOT_OPEN_ID，再按原始消息相似度选择来源；低相似度、并列或无候选继续走现有 fallback|
 |2026-06-02 14:51|私聊机器人，结论发到群聊|`messages-search API 的 --chat-type`指定先搜群组再搜个人，搜群组消息超时**模型**指定发到了**客户订单**群组内|查询去除`--chat-type`参数，根据返回消息中的`chat_type（group\|p2p）`判断是群组还是个人，执行对应的发送逻辑，超时支持重试，重试失败执行 `fallback`|
 |2026-06-01 16:18|飞书群组日志查询卡片输出到私聊，结论输出到群组问题|没有错误日志记录，未定位到问题根因|增加来源反查审计日志，记录 group/p2p 搜索摘要、mget 摘要、selection 和 **fallback** 原因，方便 **fallback** 到 home channel 后进行问题追踪|
 |2026-06-01 11:06|飞书群组日志查询卡片输出到私聊，结论输出到群组问题|**send_feishu_card.py**在执行查询时带有`--sender-type user`参数，会走飞书索引，飞书对这个维度的索引有延迟，导致群消息刚发出来时搜不到，拿不到搜索结果|删除 `--sender-type user` 参数|
