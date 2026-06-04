@@ -197,12 +197,12 @@ SQL 构造顺序：
 
 2. **来源优先级**：`--chat` 是人工显式指定目标，优先级最高。WorkBuddy 正常路径必须使用 `--resolve-chat --source-query "{用户原始问题}"`，并以来源反查选定的 `chat_id` 作为发送目标。`WORKBUDDY_HOME_CHANNEL_CHAT_ID` 只在来源反查失败时兜底；`FEISHU_CURRENT_CHAT_ID` / `AGENT_CURRENT_CHAT_ID` 等环境变量只作为更低优先级兼容路径，不能覆盖或短路成功反查结果。
 
-3. **反查来源**：`--resolve-chat` 使用 `send_feishu_card.py` 的当前实现为准：用 `--source-query` 里的用户原始问题执行混合消息搜索，不指定 `--chat-type`，再根据返回消息的 `chat_type` 路由。`chat_type=p2p` 时发送到私聊 `chat_id`；`chat_type=group` 时必须二次校验 `mentions` 中包含 `BOT_OPEN_ID` 或 `Tom`，通过后发送到群聊 `chat_id` 并 @ 提问人。`--source-query` 必须来自触发技能的原始消息；禁止传分析摘要、关键切片、卡片标题或改写后的问题。
+3. **反查来源**：`--resolve-chat` 使用 `send_feishu_card.py` 的当前实现为准：先用 `--source-query` 里的用户原始问题执行混合消息搜索，不指定 `--chat-type`，再根据返回消息的 `chat_type` 路由。`chat_type=p2p` 时发送到私聊 `chat_id`；`chat_type=group` 时必须二次校验 `mentions` 中包含 `BOT_OPEN_ID` 或 `Tom`，通过后发送到群聊 `chat_id` 并 @ 提问人。完整原始问题搜索 0 命中时，脚本会用 `@Tom` 搜索最近窗口内的群聊候选池（最多 50 条），再用原始问题和候选正文相似度选择来源；该退化策略仍必须通过群聊 @Tom 校验，不能绕过来源安全规则。`--source-query` 必须来自触发技能的原始消息；禁止传分析摘要、关键切片、卡片标题或改写后的问题。
 4. **WorkBuddy 直问兜底**：如果 `--resolve-chat` 未反查到可用来源，但已配置 `WORKBUDDY_HOME_CHANNEL_CHAT_ID`，则将卡片发送到该 home channel 私聊；只有该目标也不存在时，才降级为纯文本 fallback。
 
 5. **当前脚本行为**：
-   - 单一来源命中 0 条 → 搜不到来源；若配置了 `WORKBUDDY_HOME_CHANNEL_CHAT_ID`，发送到该 home channel 私聊，否则 fallback 为当前会话纯文本。
-   - 单一来源或跨来源多命中 → 先过滤无效群聊候选，再以 `create_time/update_time/timestamp` 最新的一条作为发送目标。
+   - 完整原始问题搜索 0 条 → 自动搜索 `@Tom` 候选池并按相似度选择；仍无有效候选、相似度过低或并列时才视为搜不到来源。若配置了 `WORKBUDDY_HOME_CHANNEL_CHAT_ID`，发送到该 home channel 私聊，否则 fallback 为当前会话纯文本。
+   - 完整原始问题单一来源或跨来源多命中 → 先过滤无效群聊候选，再以 `create_time/update_time/timestamp` 最新的一条作为发送目标；`@Tom` 候选池退化搜索多命中时按原始问题相似度选择，不按最新时间盲选。
    - 群聊候选必须是 @Tom 的消息；未 @Tom 的同文本群消息只能作为噪声过滤，不能作为发送目标。
    - 搜索超时、网络错误、解析失败时最多重试 3 次，间隔 5s/10s/15s；仍失败才进入 fallback。
    - 群聊解析到 sender 时会自动 @ 提问者；显式 `--at-sender` 仍可传入，但不是唯一 @ 条件。
@@ -217,7 +217,7 @@ SQL 构造顺序：
      --quiet-success \
      --title "..." --color "..." --data "..."
    ```
-   - 正常路径必须保留 `--resolve-chat --source-query`；只要传入 `--resolve-chat`，脚本就必须使用原始问题 + 时间窗反查群聊和私聊来源，并在多命中时选择最新消息，环境变量不得短路发送目标
+   - 正常路径必须保留 `--resolve-chat --source-query`；只要传入 `--resolve-chat`，脚本就必须使用原始问题 + 时间窗反查群聊和私聊来源。完整原始问题命中多来源时选择最新有效消息；完整搜索 0 命中后才使用 `@Tom` 候选池 + 相似度退化搜索；环境变量不得短路发送目标
    - 建议保留 `--debug-log-dir "/private/tmp/xh-log-lookup-route"`；当卡片 fallback 到 home channel 时，优先查看审计 JSON 中的 `fallback`、`searches`、`mget` 和 `selection` 定位反查失败原因
    - `--data` 是卡片内容，允许 `{}` 表示无结果卡片；它不参与来源反查，也不能替代 `--source-query`
    - 需要人工指定目标时可传 `--chat "{chat_id}"`；WorkBuddy 正常自动路径在来源反查失败后禁止改用历史或猜测的 `--chat oc_xxx`
@@ -243,14 +243,15 @@ SQL 构造顺序：
 
 用户问表中`别名`对应的整体日志、异常、健康情况时，不需要追问具体 `serviceName`；按同别名的全部 `serviceName` 查询。用户明确写出具体 `serviceName` 时，才只查该单个服务。
 
-业务意图优先级固定为：标识符查询 → 业务链路查询 → 服务健康查询 → 服务别名范围查询。用户提供 `traceId/orderId/cid/contractNo` 等标识符时优先按标识符查；用户描述"下单、借款下单、下单成功、下单失败、下单异常、下单链路异常、拦截"时，按业务链路查询处理并优先使用模块锚点。只有用户明确说"订单服务异常"、"订单组异常"、"客户订单组健康检查"、"`order-batch`"、"`order-batch-timing`"、"`mqResendJob`"、"服务健康"等服务侧语义时，才按服务健康或服务组范围处理。
+业务意图优先级固定为：标识符查询 → 业务链路查询 → 服务健康查询 → 服务别名范围查询。用户提供 `traceId/orderId/cid/contractNo` 等标识符时优先按标识符查；用户描述"借款首页、借款内容、借款试算、预检、借款能力校验、首页不展示借款额度、客户申请借款、申请前轨迹"时，按申请前链路查询处理；用户只说"借款失败"且未明确订单、下单或反欺诈时，也默认按申请前链路查询处理；用户描述"下单、借款下单、下单成功、下单失败、订单失败、下单异常、下单链路异常、拦截"时，按正式下单链路查询处理并优先使用模块锚点。只有用户明确说"订单服务异常"、"订单组异常"、"客户订单组健康检查"、"`order-batch`"、"`order-batch-timing`"、"`mqResendJob`"、"服务健康"等服务侧语义时，才按服务健康或服务组范围处理。
 
 业务链路查询的结论必须围绕用户目标输出。通用服务 ERROR/WARN 可以作为背景风险提示，但必须单独标注为"服务背景异常"或"订单组服务异常"，不得汇总成业务链路异常。
 
 | 关键词 | 业务模块 reference | 业务模块 |
 |--------|---------|--------|
 | 签约、重签、重新签约、RESIGN、SIGNING_ISSUE、签约协议、支付协议、代扣协议、协议共享、协议号同步、绑卡、银行卡签约 | `references/modules/sign.md` | 签约模块 |
-| 下单、端内（自营）下单、api下单、订单、拦截、反欺诈、借款能力预检、预检、借款试算、试算 | `references/modules/order.md` | 下单模块 |
+| 登录后借款、借款首页、借款入口、借款内容、借款内容页、借款申请前、客户借款申请、借款能力预检、借款能力校验、预检、借款试算、试算、首页不展示借款额度、借款失败、行为轨迹、客户轨迹、贷前链路 | `references/modules/apply.md` | 借款申请模块 |
+| 下单、端内（自营）下单、api下单、订单、拦截、反欺诈 | `references/modules/order.md` | 下单模块 |
 | 权益、会员、VIP、优惠券、乐活卡、coupon、尊享卡、拒就赔、加速卡、获额卡、返现券 | `references/modules/benefit.md` | 权益模块 |
 | 放款、资金路由、route、解H、loki放款、拒就赔、提前结清、特项额度 | `references/modules/loan.md` | 放款模块 |
 | 还款、扣款、逾期、代扣、结清、repay、债转、好友代付、聚合支付 | `references/modules/repay.md` | 还款模块 |
@@ -384,7 +385,8 @@ URL: `https://datasight-1300455117.internal.clsconsole.tencent-cloud.com/cls/sea
 
 ## References
 
-- 订单/下单/预检/试算问题：读 `references/modules/order.md`
+- 借款申请前/首页/预检/试算/客户轨迹问题：读 `references/modules/apply.md`
+- 订单/正式下单/下单拦截/反欺诈问题：读 `references/modules/order.md`
 - 签约/重签/协议/绑卡问题：读 `references/modules/sign.md`
 - 权益/VIP/优惠券/乐活卡问题：读 `references/modules/benefit.md`
 - 放款/资金路由/loki/提前结清问题：读 `references/modules/loan.md`
