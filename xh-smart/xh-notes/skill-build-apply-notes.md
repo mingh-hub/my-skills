@@ -11,7 +11,7 @@ com.xhqb.weixinh5api.biz.service.web.BasicInfoController#queryBasicMain
 ```
 
 - 入口日志：`serviceName:"weixin-h5api" AND message:"BasicInfoController.queryBasicMain cid" AND message:{cid}`
-- 结果日志：`serviceName:"weixin-h5api" AND message:"查询卡片信息最终参数为" AND message:{traceId}`，`traceId`就是根据入口定位
+- 结果日志：`serviceName:"weixin-h5api" AND message:"查询卡片信息最终参数为" AND message:{traceId}`，`traceId`需要先根据`入口日志`定位
 - 针对这个接口返回有一部分字段需要重点关注，根据返回字段值的不同，前端走不通的流程。
 
   |字段名|说明|
@@ -21,3 +21,5 @@ com.xhqb.weixinh5api.biz.service.web.BasicInfoController#queryBasicMain
   |`cardDetailList.cardEnum`|查`cardDetailList`列表中第一项元素，返回卡类型：`SELF_SUPPORT`-自营首页，`QZC_CODE`-轻资产首页；`自营首页`包含`小程序首页`和`H5首页`|
   |`cardDetailList.creditAmount`|授信总额度|
   |`cardDetailList.availableAmount`|当前可用额度|
+
+## 借款试算页（借款内容页）
