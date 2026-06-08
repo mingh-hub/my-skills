@@ -6,7 +6,7 @@
 
 - **默认自营签约**：用户只说"签约"、"绑卡"、"借款签约"、"新增签约"、"换绑卡"、"还款签约绑卡"、"重签约"、"重新签约"、`RESIGN`、"一直提示重签"，且未明确 API 渠道时，默认按自营签约绑卡查询，主服务是 `h5-loan`。
 - **API 渠道签约**：用户明确说"API 渠道"、"渠道侧"、"渠道"、"API 新增绑卡"、"API 换卡"、"快捷绑卡协议通知"、"接口绑卡"时，按 API 渠道签约查询，主服务是 `order`。
-- **协议共享**：用户问"协议共享"、"协议号同步 loki"、"loki 没收到协议"、"资金平台协议推送"时，先查 `order` 生成/共享协议 MQ，再用桥接键查 `loki-webapp`。
+- **协议共享**：用户问"协议共享"、"协议号同步 loki"、"loki 没收到协议"、"资金平台协议推送"时，先查 `order` 生成/共享协议 MQ，再用三要素追 `loki-webapp` 和资金平台。
 - **还款触发重签/协议失效**：用户明确说 `SIGNING_ISSUE`、"还款失败提示重签"、"支付协议失效"时，先按自营签约定位客户和签约状态，再用 `order` 查协议失效、还款失败触发和支付侧状态，必要时联动 `repay.md`。
 
 ## 首查策略
@@ -22,7 +22,7 @@
 | `applyId` | 自营：`serviceName:"h5-loan" AND (message:"[签约确认]" OR message:"[签约绑卡]") AND message:"{applyId}"`；API：`serviceName:"order" AND message:"[签约确认]" AND message:"{applyId}"` | 申请后确认/绑卡的桥接键 |
 | `orderId` | `serviceName:"order" AND message:"{orderId}" AND (message:"签约" OR message:"SINGFAIL" OR message:"PRESIGN")` | 借款签约失败与下单链路交叉判断 |
 | `contractNo` | `serviceName:"order" AND message:"{contractNo}" AND (message:"签约" OR message:"协议" OR message:"扣款失败")` | 还款协议/代扣协议问题优先 |
-| `agreementNo` | `serviceName:"order" AND message:"{agreementNo}"`，再查 `serviceName:"loki-webapp" AND message:"{agreementNo}"` | 协议生成和协议共享追踪 |
+| `agreementNo` | `serviceName:"order" AND message:"{agreementNo}"`，命中后提取三要素再查 `loki-webapp` 协议共享日志 | 协议生成和协议共享追踪 |
 
 ## 自营签约绑卡
 
@@ -67,14 +67,14 @@ API 渠道流程：卡片校验/签约查询 -> 返回未签约渠道 -> 签约�
 
 ## 通用协议共享
 
-协议共享常见于签约绑卡或解绑后，`order` 生成协议共享消息发给 `loki`，`loki` 再调资金平台 HTTP 服务处理。`loanApplyNo` 是 `order` 发 MQ 和 `loki` 接 MQ 的桥接键。
+协议共享常见于签约绑卡或解绑后，`order` 生成协议共享消息发给 `loki`，`loki` 再调资金平台 HTTP 服务处理。优先用三要素追踪：`order/loki` 侧字段为 `certId/bankAccountNumber/phoneNumber`，资金平台侧字段为 `phone/idCard/bankCard`；若日志中带 `loanApplyNo/agreementNo`，可作为辅查标识。
 
 | 场景 | 方法入口 | 日志锚点/关键词 | 推荐查询 | 关键指标 | 说明 |
 |------|----------|----------------|----------|----------|------|
 | 签约后生成协议 MQ | `com.xhqb.order.biz.service.impl.others.JmsQService#signConfirmNotifyProto` | `签约后生产协议Q, 参数` | `serviceName:"order" AND message:"签约后生产协议Q" AND message:"{cid或agreementNo}"` | `agreementNo`、`payChannel` | 签约确认后通知生成协议 |
-| order 发送 loki MQ | `com.xhqb.order.biz.service.handle.SharingAgreementLokiQtHandle#sendQToLoki` | `[协议共享]协议号共享请求loki`、`协议号共享请求loki结束` | `serviceName:"order" AND message:"[协议共享]协议号共享请求loki" AND message:"{value}"` | `loanApplyNo`、`agreementNo`、`cid` | `value` 优先用 `loanApplyNo/agreementNo/cid` |
-| loki 接收 MQ | `com.xhqb.loki.message.tdmq.consumer.SharingAgreementMessageConsumer#sharingAgreementConsumer` | `[协议共享]order推送协议号消息`、`order推送协议号处理出错` | `serviceName:"loki-webapp" AND message:"[协议共享]order推送协议号消息" AND message:"{loanApplyNo}"` | `orgCode`、`loanApplyNo`、`creditApplyNo`、`transType` | 命中后继续追资金平台推送 |
-| loki 推资金平台 | `com.xhqb.loki.funds.platform.sharingagreement.http.HttpService#shareAgreement` | `[协议共享]推送协议签约请求体`、`[协议共享]推送协议签约结果为` | `serviceName:"loki-webapp" AND message:"[协议共享]推送协议签约" AND message:"{loanApplyNo}"` | HTTP 请求体、资金平台返回 | 判断资金平台是否接收成功 |
+| order 发送 loki MQ | `com.xhqb.order.biz.service.handle.SharingAgreementLokiQtHandle#sendQToLoki` | `[协议共享]协议号共享请求loki`、`协议号共享请求loki结束` | `serviceName:"order" AND message:"[协议共享]协议号共享请求loki" AND message:"{value}"` | `certId`、`bankAccountNumber`、`phoneNumber` | `value` 优先用 `certId/bankAccountNumber/phoneNumber` |
+| loki 接收 MQ | `com.xhqb.loki.message.tdmq.consumer.SharingAgreementMessageConsumer#sharingAgreementConsumer` | `[协议共享]order推送协议号消息`、`order推送协议号处理出错` | `serviceName:"loki-webapp" AND message:"[协议共享]order推送协议号消息" AND message:"{value}"` | `certId`、`bankAccountNumber`、`phoneNumber` | 命中后继续追资金平台推送 |
+| loki 推资金平台 | `com.xhqb.loki.funds.platform.sharingagreement.http.HttpService#shareAgreement` | `[协议共享]推送协议签约请求体`、`[协议共享]推送协议签约结果为` | `serviceName:"loki-webapp" AND message:"[协议共享]推送协议签约" AND message:"{value}"` | `phone`、`idCard`、`bankCard` | 判断资金平台是否接收成功 |
 
 ## 重签和还款签约补充
 
@@ -115,7 +115,7 @@ API 渠道流程：卡片校验/签约查询 -> 返回未签约渠道 -> 签约�
 结论必须说明：
 
 - 用户问题属于自营签约、API 渠道签约、协议共享、重新签约还是还款签约补充。
-- 查到的标识符：`cid/orderId/contractNo/traceId/applyId/agreementNo/loanApplyNo`，以及手机号、身份证号、银行卡号是否只是定位入口。
+- 查到的标识符：`cid/orderId/contractNo/traceId/applyId/agreementNo/loanApplyNo`，协议共享三要素 `certId/bankAccountNumber/phoneNumber` 或 `phone/idCard/bankCard`，以及手机号、身份证号、银行卡号是否只是定位入口。
 - 签约查询、签约申请、签约确认、签约绑卡、协议生成/共享各节点是否命中。
 - 关键状态：`needSign`、`handle`、`signStatus`、`needSignCount`、`notSignChannel`、`signChannel`、`agreementType`、`agreementNo`、`isCardBind`。
 - 是否存在并发锁、短信申请缓存、协议通知频控、重签缓存或全渠道禁闭等时间窗口/并发因素。

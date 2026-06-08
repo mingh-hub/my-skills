@@ -4,7 +4,7 @@
 
 ## 借款首页
 
-客户登录成功会进入首页，会调下面的接口判断是走`自营首页`还是`轻资产首页`
+>客户登录成功会进入首页，会调下面的接口判断是走`自营首页`还是`轻资产首页`
 
 ```java
 com.xhqb.weixinh5api.biz.service.web.BasicInfoController#queryBasicMain
@@ -23,3 +23,5 @@ com.xhqb.weixinh5api.biz.service.web.BasicInfoController#queryBasicMain
   |`cardDetailList.availableAmount`|当前可用额度|
 
 ## 借款试算页（借款内容页）
+
+> 进入首页会首先调借款能力校验接口（`/loanAbility`），
