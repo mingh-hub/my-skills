@@ -22,6 +22,10 @@ com.xhqb.weixinh5api.biz.service.web.BasicInfoController#queryBasicMain
   |`cardDetailList.creditAmount`|授信总额度|
   |`cardDetailList.availableAmount`|当前可用额度|
 
-## 借款试算页（借款内容页）
+## 借款试算页/借款内容页
 
-> 进入首页会首先调借款能力校验接口（`/loanAbility`），
+> 借款试算页初始化会先调借款能力校验接口（`/h5-loan/loan/loanAbility`），校验通过后进入试算页面，页面内容是调借款内容接口（`/h5-loan/loan/loanContent`）获取，客户点击试算页的借款申请则会调用下单检查（`/h5-loan/loan/loanCheck`）及检查通过后的下单接口（`/h5-loan/loan/loan`）
+
+| 场景 | 方法入口 | 日志锚点/关键词 | 推荐查询 | 关键指标 | 说明 |
+| ------ | ------ | ------ | ------ | ------ | ------ |
+|借款能力校验|`/h5-loan/loan/loanAbility`|`[借款能力]客户cid`|<ul><li>入口日志：`serviceName:"h5-loan" AND message:"[借款能力]客户cid" AND message:"借款流程渠道"`</li><li>出口日志：`serviceName:"h5-loan" AND message:"[借款能力]客户cid" AND message:"借款能力查询结果"`</li></ul>|<ul><li>`diversion`：`true`-导流，`false`-不导流</li><li>`canLoan`：`true`-允许借款，`false`-不允许借款</li></ul>|`diversion=true`表示需要导流就会走API渠道导流业务，不能走自营借款业务，走自营借款流程时再看`canLoan`字段，如果为`false`|
