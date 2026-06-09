@@ -47,6 +47,7 @@ disable: false
 |`account`|`account`|`账户信息,客户账户信息`|`/Users/user/mingh/workspace/account`|
 |`datainquiry`|`data-inquiry`|`数据查询`|`/Users/user/mingh/workspace/data-inquiry`|
 |`loki-webapp`|`loki`|`loki,loki放款`|`/Users/user/mingh/workspace/loki`|
+|`fund-center`|`fund-center`|`fund-center,fundCenter,资金管理系统,资金管理平台`|`/Users/user/mingh/workspace/fund-center`|
 |`weixin-h5api`|`weixin_h5api`|-|`/Users/user/mingh/workspace/weixin_h5api`|
 |`app-server`|`appServer`|-|`/Users/user/mingh/workspace/appServer`|
 
