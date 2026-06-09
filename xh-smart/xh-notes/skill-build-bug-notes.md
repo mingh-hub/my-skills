@@ -2,6 +2,7 @@
 
 |时间|问题描述|根因分析|解决方案|测试验证|
 |------|------|------|------|------|
+|2026-06-09 13:02|群聊刚 @Tom 提问后卡片降级发送到 HOME_CHANNEL 私聊|飞书 `messages-search` 对新消息有搜索索引延迟，消息刚发出时 API 可正常返回但 `total=0/message_ids=[]`，来源反查误判为搜不到群聊来源|`send_feishu_card.py` 对搜索成功但 0 命中的结果增加 3s/4s/4s/4s 空结果重试，总等待约 15s；命中即返回，仍 0 命中再走 `@Tom` 候选池和现有 fallback|新增空结果重试命中、重试耗尽和审计字段单测|
 |2026-06-04 21:01|群聊 @Tom 后卡片发到 HOME_CHANNEL 私聊|`send_feishu_card.py --resolve-chat` 只用完整 `source_query` 执行一次 `messages-search`；长文本混合 `traceId`、分支号、英文/数字/标点时飞书搜索分词可能返回 0 条，触发 `WORKBUDDY_HOME_CHANNEL_CHAT_ID` fallback|完整原始问题搜索 0 命中时，增加 `@Tom` 候选池 fallback：最近窗口最多拉 50 条 @Tom 群聊候选，仍校验 `mentions` 包含 Tom/BOT_OPEN_ID，再按原始消息相似度选择来源；低相似度、并列或无候选继续走现有 fallback|![alt text](images/image.png)|
 |2026-06-02 14:51|私聊机器人，结论发到群聊|`messages-search API 的 --chat-type`指定先搜群组再搜个人，搜群组消息超时**模型**指定发到了**客户订单**群组内|查询去除`--chat-type`参数，根据返回消息中的`chat_type（group\|p2p）`判断是群组还是个人，执行对应的发送逻辑，超时支持重试，重试失败执行 `fallback`|-|
 |2026-06-01 16:18|飞书群组日志查询卡片输出到私聊，结论输出到群组问题|没有错误日志记录，未定位到问题根因|增加来源反查审计日志，记录 group/p2p 搜索摘要、mget 摘要、selection 和 **fallback** 原因，方便 **fallback** 到 home channel 后进行问题追踪|-|

@@ -197,14 +197,14 @@ SQL 构造顺序：
 
 2. **来源优先级**：`--chat` 是人工显式指定目标，优先级最高。WorkBuddy 正常路径必须使用 `--resolve-chat --source-query "{用户原始问题}"`，并以来源反查选定的 `chat_id` 作为发送目标。`WORKBUDDY_HOME_CHANNEL_CHAT_ID` 只在来源反查失败时兜底；`FEISHU_CURRENT_CHAT_ID` / `AGENT_CURRENT_CHAT_ID` 等环境变量只作为更低优先级兼容路径，不能覆盖或短路成功反查结果。
 
-3. **反查来源**：`--resolve-chat` 使用 `send_feishu_card.py` 的当前实现为准：先用 `--source-query` 里的用户原始问题执行混合消息搜索，不指定 `--chat-type`，再根据返回消息的 `chat_type` 路由。`chat_type=p2p` 时发送到私聊 `chat_id`；`chat_type=group` 时必须二次校验 `mentions` 中包含 `BOT_OPEN_ID` 或 `Tom`，通过后发送到群聊 `chat_id` 并 @ 提问人。完整原始问题搜索 0 命中时，脚本会用 `@Tom` 搜索最近窗口内的群聊候选池（最多 50 条），再用原始问题和候选正文相似度选择来源；该退化策略仍必须通过群聊 @Tom 校验，不能绕过来源安全规则。`--source-query` 必须来自触发技能的原始消息；禁止传分析摘要、关键切片、卡片标题或改写后的问题。
+3. **反查来源**：`--resolve-chat` 使用 `send_feishu_card.py` 的当前实现为准：先用 `--source-query` 里的用户原始问题执行混合消息搜索，不指定 `--chat-type`，再根据返回消息的 `chat_type` 路由。`chat_type=p2p` 时发送到私聊 `chat_id`；`chat_type=group` 时必须二次校验 `mentions` 中包含 `BOT_OPEN_ID` 或 `Tom`，通过后发送到群聊 `chat_id` 并 @ 提问人。完整原始问题搜索 0 命中时，先按 3s/4s/4s/4s 等待飞书搜索索引就绪，最多约 15s；仍 0 命中时，脚本会用 `@Tom` 搜索最近窗口内的群聊候选池（最多 50 条），再用原始问题和候选正文相似度选择来源；该退化策略仍必须通过群聊 @Tom 校验，不能绕过来源安全规则。`--source-query` 必须来自触发技能的原始消息；禁止传分析摘要、关键切片、卡片标题或改写后的问题。
 4. **WorkBuddy 直问兜底**：如果 `--resolve-chat` 未反查到可用来源，但已配置 `WORKBUDDY_HOME_CHANNEL_CHAT_ID`，则将卡片发送到该 home channel 私聊；只有该目标也不存在时，才降级为纯文本 fallback。
 
 5. **当前脚本行为**：
-   - 完整原始问题搜索 0 条 → 自动搜索 `@Tom` 候选池并按相似度选择；仍无有效候选、相似度过低或并列时才视为搜不到来源。若配置了 `WORKBUDDY_HOME_CHANNEL_CHAT_ID`，发送到该 home channel 私聊，否则 fallback 为当前会话纯文本。
+   - 完整原始问题搜索 0 条 → 先最多等待约 15s 重试，命中后直接按命中来源发送；仍 0 条时自动搜索 `@Tom` 候选池并按相似度选择；仍无有效候选、相似度过低或并列时才视为搜不到来源。若配置了 `WORKBUDDY_HOME_CHANNEL_CHAT_ID`，发送到该 home channel 私聊，否则 fallback 为当前会话纯文本。
    - 完整原始问题单一来源或跨来源多命中 → 先过滤无效群聊候选，再以 `create_time/update_time/timestamp` 最新的一条作为发送目标；`@Tom` 候选池退化搜索多命中时按原始问题相似度选择，不按最新时间盲选。
    - 群聊候选必须是 @Tom 的消息；未 @Tom 的同文本群消息只能作为噪声过滤，不能作为发送目标。
-   - 搜索超时、网络错误、解析失败时最多重试 3 次，间隔 5s/10s/15s；仍失败才进入 fallback。
+   - 搜索超时、网络错误、解析失败时最多重试 3 次，间隔 5s/10s/15s；搜索成功但 0 命中时最多等待约 15s 让飞书索引就绪；仍失败或仍 0 命中才进入 fallback。
    - 群聊解析到 sender 时会自动 @ 提问者；显式 `--at-sender` 仍可传入，但不是唯一 @ 条件。
 
 6. **发送卡片**：
