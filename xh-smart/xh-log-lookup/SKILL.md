@@ -94,7 +94,7 @@ disable: false
   - **用户未提供 traceId**：按后续步骤用业务标识符定位日志后，从提取的 innerText 中识别 `traceid` 列值（通常为 16 位或 32 位 hex，如 `110e6550d81fb1bc`、`b4d5cc63c42611adb4d5cc63c42611ad`），再执行 `traceId:"{提取值}"` 做全链路分析；不要自行截断成前 16 位
   - **traceId ≠ TID**：两者是不同的索引字段，不要混淆。以 `traceid` 列为准
 - 日志无法获取明确结果时可结合项目代码
-- 每次会话首次执行**代码锚点**校验前，按 `references/common/update-master-branch.md` 更新对应服务仓库的 master 分支（路径见映射表`仓库路径`列）
+- 每次会话首次执行**代码锚点**校验前，按 `references/common/update-target-branch.md` 更新对应服务仓库到**日志所属环境的分支**（路径见映射表`仓库路径`列）：生产读 `master`，测试环境读代码前分支**必须已确认**（用户已在提问中给出分支名则直接用，否则先问；禁止默认 `master`），测试环境结论须写明实际依据的分支名。
 - 本组范围查询时，服务范围以"日志服务名和项目名映射关系表"的 `serviceName` 列为准；需要看代码时，再用同一行的`项目名`和`仓库路径`定位源码。
 - 分析要查的数据是否在子模块的流程追踪入口，是的话可以通过日志锚点查询，不是的话分析本地项目路径，确认查询`sql`,服务名参考上面`日志服务名和项目名映射关系表`；子模块入口表格里的推荐查询只是通过代码锚点校验后的首查模板，不是唯一真相。
 - 执行入口表格推荐查询前，先校验 `方法入口`、`serviceName` 和固定 `message` 片段是否仍能和当前代码匹配；可用 `scripts/validate_query_anchors.py` 辅助检查。
@@ -303,7 +303,7 @@ URL: `https://datasight-1300455117.internal.clsconsole.tencent-cloud.com/cls/sea
 - 权益/VIP/优惠券/乐活卡问题：读 `references/modules/benefit.md`
 - 放款/资金路由/loki/提前结清问题：读 `references/modules/loan.md`
 - 还款/扣款/结清/逾期问题：读 `references/modules/repay.md`
-- `references/common/update-master-branch.md`：更新本地 `master` 分支代码
+- `references/common/update-target-branch.md`：代码锚点校验前更新本地分支（生产读 `master`，测试先问用户要需求开发分支）
 - `references/common/cls-local-chrome-access.md`：备用：本地 Chrome 专用窗口访问 CLS
 - `references/common/cls-dom-extraction.md`：全文提取、加载更多、CK/CS 合同号解析
 - `references/common/cls-query-pitfalls.md`：CLS 高频坑和恢复方式
