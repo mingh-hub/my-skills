@@ -30,6 +30,7 @@ import difflib
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -44,6 +45,9 @@ CURRENT_SENDER_ENV_KEYS = (
     "AGENT_CURRENT_SENDER_OPEN_ID",
     "FEISHU_SENDER_OPEN_ID",
 )
+LARK_CLI_ABSOLUTE = "/Users/user/.workbuddy/binaries/node/cli-connector-packages/bin/lark-cli"
+LARK_CLI_BIN_DIR = os.path.dirname(LARK_CLI_ABSOLUTE)
+WORKBUDDY_NODE_BIN_DIR = "/Users/user/.workbuddy/binaries/node/versions/22.22.2/bin"
 EXTRA_CHAT_ENV_KEYS = ("WORKBUDDY_CURRENT_CHAT_ID", "CHAT_ID", "CURRENT_CHAT_ID", "FEISHU_CHAT_ID")
 DEFAULT_PRIVATE_CHAT_ENV_KEYS = (
     "WORKBUDDY_HOME_CHANNEL_CHAT_ID",
@@ -87,11 +91,20 @@ def _lark_env():
     """返回 lark-cli 所需的干净环境"""
     env = os.environ.copy()
     env["LARK_CLI_NO_PROXY"] = "1"
+    path_parts = [
+        WORKBUDDY_NODE_BIN_DIR,
+        LARK_CLI_BIN_DIR,
+        env.get("PATH", ""),
+    ]
+    env["PATH"] = ":".join(part for part in path_parts if part)
     return env
 
 
 def _lark_run(cmd_str):
     """通过 shell 执行 lark-cli 命令（绕过 Python subprocess sandbox 限制）"""
+    if not os.path.isfile(LARK_CLI_ABSOLUTE) or not os.access(LARK_CLI_ABSOLUTE, os.X_OK):
+        raise FileNotFoundError(f"lark-cli not found or not executable: {LARK_CLI_ABSOLUTE}")
+    cmd_str = cmd_str.replace("lark-cli ", f"{shlex.quote(LARK_CLI_ABSOLUTE)} ", 1)
     return subprocess.run(cmd_str, shell=True, capture_output=True, text=True,
                           timeout=15, env=_lark_env())
 

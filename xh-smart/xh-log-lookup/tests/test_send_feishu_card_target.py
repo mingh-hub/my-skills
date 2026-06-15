@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 import importlib.util
 import json
+import os
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,6 +14,35 @@ SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "send_feishu_car
 SPEC = importlib.util.spec_from_file_location("send_feishu_card", SCRIPT_PATH)
 send_feishu_card = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(send_feishu_card)
+
+
+class LarkRunTest(unittest.TestCase):
+    def test_lark_run_uses_absolute_cli_when_path_does_not_include_lark_cli(self):
+        seen = {}
+
+        def fake_run(cmd, shell, capture_output, text, timeout, env):
+            seen["cmd"] = cmd
+            seen["env"] = env
+            return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+
+        with mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}, clear=False):
+            with mock.patch.object(send_feishu_card.subprocess, "run", side_effect=fake_run):
+                result = send_feishu_card._lark_run("lark-cli --help")
+
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(
+            seen["cmd"],
+            f"{send_feishu_card.LARK_CLI_ABSOLUTE} --help",
+        )
+        self.assertEqual(
+            seen["env"]["PATH"],
+            (
+                f"{send_feishu_card.WORKBUDDY_NODE_BIN_DIR}:"
+                f"{send_feishu_card.LARK_CLI_BIN_DIR}:"
+                "/usr/bin:/bin"
+            ),
+        )
+        self.assertEqual(seen["env"]["LARK_CLI_NO_PROXY"], "1")
 
 
 class ResolveSendTargetTest(unittest.TestCase):
