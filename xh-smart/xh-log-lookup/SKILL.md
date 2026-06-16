@@ -169,6 +169,12 @@ SQL 构造顺序：
 
 ### 来源识别与飞书卡片发送
 
+> **本节优先级最高，违反等同于交付失败。** 飞书卡片是本技能**唯一**允许的结论交付方式；当前会话的纯文本**不是可选项**，只能是 `send_feishu_card.py` 已被调用且返回非 0/失败后的降级产物。
+>
+> **目标状态**：本轮结束时，要么终端已有一次 `send_feishu_card.py` 调用且退出码为 0（`--quiet-success` 下成功时 stdout 为空属正常；`status:"sent"`+`message_id` 写在审计 JSON 里），要么有该脚本失败的明确证据（退出码非 0 / stderr error JSON）+ 纯文本降级。两者皆无 = 违规。
+>
+> **反例（禁止）**：结论分析完成后，认为"问题简单/已查清/直接答复更快"，**不调脚本就把诊断文本发给用户**——即使内容正确，也按交付失败处理。"是否发卡"不由结论复杂度决定，只由本流程决定。
+
 技能被触发后，在输出最终结论前执行以下流程：
 
 1. **必须先调用发送脚本**：最终结论生成后，先执行 `send_feishu_card.py --quiet-success`。不要先输出普通文本结论；只有发送脚本返回非 0 或明确失败状态时，才输出纯文本 fallback。
@@ -192,6 +198,11 @@ python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py \
 - 退出码 0 → 视为卡片已发送，当前会话**不得**再输出诊断结论、摘要、证据、CLS 链接或卡片内容；宿主强制要求非空回复时，只输出 `已发送飞书卡片。`。
 - 退出码非 0 或 `status: "unresolved"` → 当前会话输出飞书兼容纯文本结论并说明失败原因；`error=missing_private_target` 时提示配置 `WORKBUDDY_HOME_CHANNEL_CHAT_ID`。
 - 最终结论已用普通文本输出但本轮无 `send_feishu_card.py` 调用记录 → 视为违反输出规则。
+
+**发送前自检（每轮必须逐条确认，缺一即停下补做，不得跳过）**：
+1. 本轮是否已实际执行 `send_feishu_card.py`？未执行则现在执行，不允许"口头认为已发"。
+2. 若打算在会话里输出任何诊断文本（含 CLS 链接、证据、调用链、根因），脚本是否已返回非 0 或失败状态作为依据？没有该依据就不许输出文本，回到第 1 步。
+3. 判定"已成功发卡"的唯一信号是**脚本退出码 0**（`--quiet-success` 模式下成功时 stdout 为空、不打印任何内容，这是正常的，不要因为"没看到输出"就误判失败或重发）。退出码非 0 或 stderr 出现 error JSON 才算失败，按失败降级。`status:"sent"`+`message_id` 会写进 `--debug-log-dir` 的审计 JSON，仅供事后核查，不会出现在 stdout。
 
 > 脚本反查行为（实现细节，模型无需逐条记忆）：完整原始问题先做混合搜索并按 `chat_type` 路由，0 命中时按脚本内置节奏等待索引就绪，仍 0 命中再用 `@Tom` 候选池 + 相似度退化搜索；多命中按最新有效消息选择；`--debug-log-dir` 写出 `fallback`/`searches`/`mget`/`selection` 审计 JSON；环境变量与反查冲突时以反查结果为准并记录 `env_chat_conflict`。具体重试/等待节奏以 `scripts/send_feishu_card.py` 的 `SEARCH_RETRY_DELAYS` / `ZERO_RESULT_RETRY_DELAYS` 为准。
 
@@ -232,7 +243,7 @@ python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py \
 3. **判断是否为统计模式（见"数据统计强制约束"）。是 → `cls_query.py --method auto --api-limit 500` 先探测；按 `log_count/is_complete/has_more` 决定精确统计或采样统计。**
 4. 非统计模式默认 `cls_query.py --method auto`。API 不可用或结果不完整时，用返回的 `cls_url` 交给 WorkBuddy 内置浏览器；必要时再显式切换本地 Chrome 备用路径。
 5. 0 命中时按"无结果排查清单"回退。
-6. 分析日志 → 执行「来源识别与飞书卡片发送」→ 优先发送飞书卡片。发送成功后当前会话静默或只输出 `已发送飞书卡片。`；发送失败、来源缺失或候选详情获取失败时 fallback 为当前会话纯文本。仅使用本地 Chrome 备用窗口时，最后调用 `cls_query.py --close` 关窗口。
+6. 分析日志 → 执行「来源识别与飞书卡片发送」。**结论只能通过飞书卡片交付**：发卡成功（`status:"sent"`+`message_id`）后当前会话静默或只输出 `已发送飞书卡片。`；只有脚本返回非 0/失败时才 fallback 为当前会话纯文本，且必须说明失败原因。禁止跳过脚本直接发文本——无论结论多简单。仅使用本地 Chrome 备用窗口时，最后调用 `cls_query.py --close` 关窗口。
 
 ## CLS 工具
 
