@@ -30,6 +30,7 @@ import difflib
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -44,6 +45,9 @@ CURRENT_SENDER_ENV_KEYS = (
     "AGENT_CURRENT_SENDER_OPEN_ID",
     "FEISHU_SENDER_OPEN_ID",
 )
+LARK_CLI_ABSOLUTE = "/Users/user/.workbuddy/binaries/node/cli-connector-packages/bin/lark-cli"
+LARK_CLI_BIN_DIR = os.path.dirname(LARK_CLI_ABSOLUTE)
+WORKBUDDY_NODE_BIN_DIR = "/Users/user/.workbuddy/binaries/node/versions/22.22.2/bin"
 EXTRA_CHAT_ENV_KEYS = ("WORKBUDDY_CURRENT_CHAT_ID", "CHAT_ID", "CURRENT_CHAT_ID", "FEISHU_CHAT_ID")
 DEFAULT_PRIVATE_CHAT_ENV_KEYS = (
     "WORKBUDDY_HOME_CHANNEL_CHAT_ID",
@@ -51,6 +55,7 @@ DEFAULT_PRIVATE_CHAT_ENV_KEYS = (
     "AGENT_DEFAULT_PRIVATE_CHAT_ID",
 )
 SEARCH_RETRY_DELAYS = (5, 10, 15)
+ZERO_RESULT_RETRY_DELAYS = (3, 4, 4, 4)
 AT_TOM_FALLBACK_PAGE_LIMIT = 5
 AT_TOM_FALLBACK_PAGE_SIZE = 10
 AT_TOM_FALLBACK_SIMILARITY_THRESHOLD = 0.72
@@ -86,11 +91,20 @@ def _lark_env():
     """返回 lark-cli 所需的干净环境"""
     env = os.environ.copy()
     env["LARK_CLI_NO_PROXY"] = "1"
+    path_parts = [
+        WORKBUDDY_NODE_BIN_DIR,
+        LARK_CLI_BIN_DIR,
+        env.get("PATH", ""),
+    ]
+    env["PATH"] = ":".join(part for part in path_parts if part)
     return env
 
 
 def _lark_run(cmd_str):
     """通过 shell 执行 lark-cli 命令（绕过 Python subprocess sandbox 限制）"""
+    if not os.path.isfile(LARK_CLI_ABSOLUTE) or not os.access(LARK_CLI_ABSOLUTE, os.X_OK):
+        raise FileNotFoundError(f"lark-cli not found or not executable: {LARK_CLI_ABSOLUTE}")
+    cmd_str = cmd_str.replace("lark-cli ", f"{shlex.quote(LARK_CLI_ABSOLUTE)} ", 1)
     return subprocess.run(cmd_str, shell=True, capture_output=True, text=True,
                           timeout=15, env=_lark_env())
 
@@ -438,8 +452,9 @@ def parse_cls_raw_text(raw_text):
 
 
 def _search_messages(query, start, audit=None, source="mixed",
-                     retry_delays=SEARCH_RETRY_DELAYS, sleep_func=time.sleep,
-                     page_limit=1, page_size=5):
+                     retry_delays=SEARCH_RETRY_DELAYS,
+                     zero_result_retry_delays=ZERO_RESULT_RETRY_DELAYS,
+                     sleep_func=time.sleep, page_limit=1, page_size=5):
     parts = [
         "lark-cli im +messages-search",
         "--as user",
@@ -454,16 +469,22 @@ def _search_messages(query, start, audit=None, source="mixed",
     cmd = " ".join(parts)
     attempts = []
     delays = tuple(retry_delays or ())
+    zero_delays = tuple(zero_result_retry_delays or ())
     data = None
     result = None
+    error_retry_index = 0
+    zero_retry_index = 0
 
-    for index in range(len(delays) + 1):
+    while True:
         started = time.monotonic()
         attempt = {
-            "attempt": index + 1,
+            "attempt": len(attempts) + 1,
             "ok": False,
+            "zero_result": False,
             "timeout": False,
             "returncode": None,
+            "total": None,
+            "message_ids_count": 0,
             "elapsed_ms": 0,
             "error_summary": "",
             "stderr_summary": "",
@@ -473,6 +494,22 @@ def _search_messages(query, start, audit=None, source="mixed",
             attempt["returncode"] = getattr(result, "returncode", 0)
             data = _load_json_output(result.stdout, result.stderr, "resolve_chat.search")
             attempt["ok"] = bool(isinstance(data, dict) and data.get("ok") and attempt["returncode"] == 0)
+            if attempt["ok"]:
+                payload = data.get("data", {}) if isinstance(data.get("data", {}), dict) else {}
+                message_ids = _extract_message_ids(payload)
+                messages = _extract_messages(payload)
+                total = payload.get("total")
+                try:
+                    total_count = int(total) if total is not None else None
+                except (TypeError, ValueError):
+                    total_count = None
+                attempt["total"] = total
+                attempt["message_ids_count"] = len(message_ids)
+                attempt["zero_result"] = not (
+                    message_ids
+                    or messages
+                    or (total_count is not None and total_count > 0)
+                )
             if isinstance(data, dict):
                 attempt["error_summary"] = _redact_audit_text(data.get("error"), query, 500)
             else:
@@ -487,10 +524,19 @@ def _search_messages(query, start, audit=None, source="mixed",
             attempt["elapsed_ms"] = int((time.monotonic() - started) * 1000)
             attempts.append(attempt)
 
-        if attempt["ok"]:
+        if attempt["ok"] and not attempt["zero_result"]:
             break
-        if index < len(delays):
-            sleep_func(delays[index])
+        if attempt["ok"] and attempt["zero_result"]:
+            if zero_retry_index < len(zero_delays):
+                sleep_func(zero_delays[zero_retry_index])
+                zero_retry_index += 1
+                continue
+            break
+        if error_retry_index < len(delays):
+            sleep_func(delays[error_retry_index])
+            error_retry_index += 1
+            continue
+        break
 
     if audit:
         payload = data.get("data", {}) if isinstance(data, dict) else {}
@@ -512,6 +558,8 @@ def _search_messages(query, start, audit=None, source="mixed",
             "message_ids_preview": message_ids[:5],
             "attempt_count": len(attempts),
             "attempts": attempts,
+            "zero_result_retry_enabled": bool(zero_delays),
+            "zero_result_retry_count": sum(1 for item in attempts[:-1] if item.get("zero_result")),
             "error_summary": (
                 _redact_audit_text(data.get("error"), query, 500)
                 if isinstance(data, dict) else "parse_failed"
@@ -852,13 +900,22 @@ def _result_from_selected_candidate(
     return result
 
 
-def _resolve_at_tom_fallback(query, start, window_minutes, audit=None):
+def _resolve_at_tom_fallback(
+    query,
+    start,
+    window_minutes,
+    audit=None,
+    zero_result_retry_delays=ZERO_RESULT_RETRY_DELAYS,
+    sleep_func=time.sleep,
+):
     source = "mixed_at_tom_fallback"
     search_data = _search_messages(
         query="@Tom",
         start=start,
         audit=audit,
         source=source,
+        zero_result_retry_delays=zero_result_retry_delays,
+        sleep_func=sleep_func,
         page_limit=AT_TOM_FALLBACK_PAGE_LIMIT,
         page_size=AT_TOM_FALLBACK_PAGE_SIZE,
     )
@@ -1000,7 +1057,13 @@ def _recent_start(minutes):
     return (datetime.now(tz) - timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%S+08:00")
 
 
-def resolve_chat(query, window_minutes=15, audit=None):
+def resolve_chat(
+    query,
+    window_minutes=15,
+    audit=None,
+    zero_result_retry_delays=ZERO_RESULT_RETRY_DELAYS,
+    sleep_func=time.sleep,
+):
     """在时间窗内用问题文本混合搜索群聊/私聊来源消息。
 
     Returns:
@@ -1024,6 +1087,8 @@ def resolve_chat(query, window_minutes=15, audit=None):
         start=start,
         audit=audit,
         source=source,
+        zero_result_retry_delays=zero_result_retry_delays,
+        sleep_func=sleep_func,
     )
     if search_data is None:
         if audit:
@@ -1079,7 +1144,14 @@ def resolve_chat(query, window_minutes=15, audit=None):
                 "matched_count": 0,
                 "search_strategy": f"latest_query_mixed_{window_minutes}m",
             }
-        fallback_result = _resolve_at_tom_fallback(query, start, window_minutes, audit=audit)
+        fallback_result = _resolve_at_tom_fallback(
+            query,
+            start,
+            window_minutes,
+            audit=audit,
+            zero_result_retry_delays=zero_result_retry_delays,
+            sleep_func=sleep_func,
+        )
         if fallback_result:
             return fallback_result
         if audit:

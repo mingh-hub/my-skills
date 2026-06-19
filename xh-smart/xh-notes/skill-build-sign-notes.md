@@ -177,7 +177,7 @@ com.xhqb.order.biz.service.impl.SignServiceImpl#notifyProtocol
 ## 通用业务
 
 **协议共享**
-签约绑卡或解绑后会发MQ给`loki`，`loki` 接收到协议信息后会通过调资金平台`http`服务进行处理。`loanApplyNo`是`order` 发送MQ和`loki` 接收MQ的**桥接键**
+签约绑卡或解绑后会发MQ给`loki`，`loki` 接收到协议信息后会通过调资金平台`http`服务进行处理。优先用三要素追踪：`order/loki`侧字段为`certId/bankAccountNumber/phoneNumber`，资金平台侧字段为`phone/idCard/bankCard`；若日志中带`loanApplyNo/agreementNo`，可作为辅查标识。
 
 `order` 发送MQ：
 
@@ -193,4 +193,4 @@ com.xhqb.order.biz.service.handle.SharingAgreementLokiQtHandle#sendQToLoki
 com.xhqb.loki.message.tdmq.consumer.SharingAgreementMessageConsumer#sharingAgreementConsumer
 ```
 
-- 入口日志：`serviceName:"loki-webapp" AND message:"[协议共享]order推送协议号消息"`，`loanApplyNo`是客户放款成功`loki`的用信流水号
+- 入口日志：`serviceName:"loki-webapp" AND message:"[协议共享]order推送协议号消息"`，优先追加`certId/bankAccountNumber/phoneNumber`中的可用值继续定位

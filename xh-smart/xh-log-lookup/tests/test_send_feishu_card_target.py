@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 import importlib.util
 import json
+import os
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,6 +14,35 @@ SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "send_feishu_car
 SPEC = importlib.util.spec_from_file_location("send_feishu_card", SCRIPT_PATH)
 send_feishu_card = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(send_feishu_card)
+
+
+class LarkRunTest(unittest.TestCase):
+    def test_lark_run_uses_absolute_cli_when_path_does_not_include_lark_cli(self):
+        seen = {}
+
+        def fake_run(cmd, shell, capture_output, text, timeout, env):
+            seen["cmd"] = cmd
+            seen["env"] = env
+            return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+
+        with mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}, clear=False):
+            with mock.patch.object(send_feishu_card.subprocess, "run", side_effect=fake_run):
+                result = send_feishu_card._lark_run("lark-cli --help")
+
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(
+            seen["cmd"],
+            f"{send_feishu_card.LARK_CLI_ABSOLUTE} --help",
+        )
+        self.assertEqual(
+            seen["env"]["PATH"],
+            (
+                f"{send_feishu_card.WORKBUDDY_NODE_BIN_DIR}:"
+                f"{send_feishu_card.LARK_CLI_BIN_DIR}:"
+                "/usr/bin:/bin"
+            ),
+        )
+        self.assertEqual(seen["env"]["LARK_CLI_NO_PROXY"], "1")
 
 
 class ResolveSendTargetTest(unittest.TestCase):
@@ -248,6 +279,7 @@ class SearchMessagesCommandTest(unittest.TestCase):
             send_feishu_card._search_messages(
                 query="看下我们组近半小时服务异常情况",
                 start="2026-06-01T10:30:00+08:00",
+                zero_result_retry_delays=(),
             )
         finally:
             send_feishu_card._lark_run = original_lark_run
@@ -280,6 +312,7 @@ class SearchMessagesCommandTest(unittest.TestCase):
             send_feishu_card._search_messages(
                 query="@Tom",
                 start="2026-06-01T10:30:00+08:00",
+                zero_result_retry_delays=(),
                 page_limit=5,
                 page_size=10,
             )
@@ -373,6 +406,7 @@ class SearchMessagesCommandTest(unittest.TestCase):
                 query="看下我们组近半小时服务异常情况",
                 start="2026-06-01T10:30:00+08:00",
                 sleep_func=sleeps.append,
+                zero_result_retry_delays=(),
             )
         finally:
             send_feishu_card._lark_run = original_lark_run
@@ -380,6 +414,81 @@ class SearchMessagesCommandTest(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(len(calls), 3)
         self.assertEqual(sleeps, [5, 10])
+
+    def test_search_retries_zero_result_until_message_index_ready(self):
+        original_lark_run = send_feishu_card._lark_run
+        calls = []
+        sleeps = []
+        audit = send_feishu_card.RouteAudit()
+        try:
+            def fake_lark_run(cmd):
+                calls.append(cmd)
+                if len(calls) < 3:
+                    return SimpleNamespace(
+                        stdout='{"ok": true, "data": {"total": 0, "message_ids": []}}',
+                        stderr="",
+                        returncode=0,
+                    )
+                return SimpleNamespace(
+                    stdout='{"ok": true, "data": {"total": 1, "message_ids": ["om_ready"]}}',
+                    stderr="",
+                    returncode=0,
+                )
+
+            send_feishu_card._lark_run = fake_lark_run
+            result = send_feishu_card._search_messages(
+                query="刚发的群消息",
+                start="2026-06-09T10:30:00+08:00",
+                audit=audit,
+                sleep_func=sleeps.append,
+            )
+        finally:
+            send_feishu_card._lark_run = original_lark_run
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["data"]["message_ids"], ["om_ready"])
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(sleeps, [3, 4])
+        search = audit.data["searches"][0]
+        self.assertEqual(search["attempt_count"], 3)
+        self.assertEqual(search["zero_result_retry_count"], 2)
+        self.assertTrue(search["zero_result_retry_enabled"])
+        self.assertTrue(search["attempts"][0]["zero_result"])
+        self.assertFalse(search["attempts"][-1]["zero_result"])
+        self.assertEqual(search["message_ids_count"], 1)
+
+    def test_search_stops_after_zero_result_retry_delays_are_exhausted(self):
+        original_lark_run = send_feishu_card._lark_run
+        calls = []
+        sleeps = []
+        audit = send_feishu_card.RouteAudit()
+        try:
+            def fake_lark_run(cmd):
+                calls.append(cmd)
+                return SimpleNamespace(
+                    stdout='{"ok": true, "data": {"total": 0, "message_ids": []}}',
+                    stderr="",
+                    returncode=0,
+                )
+
+            send_feishu_card._lark_run = fake_lark_run
+            result = send_feishu_card._search_messages(
+                query="刚发的群消息",
+                start="2026-06-09T10:30:00+08:00",
+                audit=audit,
+                sleep_func=sleeps.append,
+            )
+        finally:
+            send_feishu_card._lark_run = original_lark_run
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["data"]["total"], 0)
+        self.assertEqual(len(calls), 5)
+        self.assertEqual(sleeps, [3, 4, 4, 4])
+        search = audit.data["searches"][0]
+        self.assertEqual(search["attempt_count"], 5)
+        self.assertEqual(search["zero_result_retry_count"], 4)
+        self.assertTrue(all(item["zero_result"] for item in search["attempts"]))
 
 
 class ResolveChatMixedSearchTest(unittest.TestCase):
@@ -390,6 +499,9 @@ class ResolveChatMixedSearchTest(unittest.TestCase):
             return func()
         finally:
             send_feishu_card._lark_run = original_lark_run
+
+    def _resolve_chat(self, query):
+        return send_feishu_card.resolve_chat(query, zero_result_retry_delays=())
 
     def test_p2p_message_routes_to_private_chat(self):
         def fake_lark_run(cmd):
@@ -415,7 +527,7 @@ class ResolveChatMixedSearchTest(unittest.TestCase):
 
         result = self._with_lark_run(
             fake_lark_run,
-            lambda: send_feishu_card.resolve_chat("看下我们组近一小时异常情况"),
+            lambda: self._resolve_chat("看下我们组近一小时异常情况"),
         )
 
         self.assertEqual(result["chat_id"], "oc_private")
@@ -448,7 +560,7 @@ class ResolveChatMixedSearchTest(unittest.TestCase):
 
         result = self._with_lark_run(
             fake_lark_run,
-            lambda: send_feishu_card.resolve_chat("看下我们组近一小时异常情况"),
+            lambda: self._resolve_chat("看下我们组近一小时异常情况"),
         )
 
         self.assertEqual(result["chat_id"], "oc_group")
@@ -482,7 +594,7 @@ class ResolveChatMixedSearchTest(unittest.TestCase):
 
         result = self._with_lark_run(
             fake_lark_run,
-            lambda: send_feishu_card.resolve_chat("看下我们组近一小时异常情况"),
+            lambda: self._resolve_chat("看下我们组近一小时异常情况"),
         )
 
         self.assertTrue(result["unresolved"])
@@ -531,7 +643,7 @@ class ResolveChatMixedSearchTest(unittest.TestCase):
 
         result = self._with_lark_run(
             fake_lark_run,
-            lambda: send_feishu_card.resolve_chat("看下我们组近一小时异常情况"),
+            lambda: self._resolve_chat("看下我们组近一小时异常情况"),
         )
 
         self.assertEqual(result["matched_msg_id"], "om_new")
@@ -569,7 +681,7 @@ class ResolveChatMixedSearchTest(unittest.TestCase):
 
         result = self._with_lark_run(
             fake_lark_run,
-            lambda: send_feishu_card.resolve_chat("看下我们组近一小时异常情况"),
+            lambda: self._resolve_chat("看下我们组近一小时异常情况"),
         )
 
         self.assertEqual(result["chat_id"], "oc_private")
@@ -609,7 +721,7 @@ class ResolveChatMixedSearchTest(unittest.TestCase):
 
         result = self._with_lark_run(
             fake_lark_run,
-            lambda: send_feishu_card.resolve_chat(source_query),
+            lambda: self._resolve_chat(source_query),
         )
 
         self.assertEqual(result["chat_id"], "oc_group")
@@ -661,7 +773,7 @@ class ResolveChatMixedSearchTest(unittest.TestCase):
 
         result = self._with_lark_run(
             fake_lark_run,
-            lambda: send_feishu_card.resolve_chat(source_query),
+            lambda: self._resolve_chat(source_query),
         )
 
         self.assertEqual(result["matched_msg_id"], "om_old_exact")
@@ -697,7 +809,7 @@ class ResolveChatMixedSearchTest(unittest.TestCase):
 
         result = self._with_lark_run(
             fake_lark_run,
-            lambda: send_feishu_card.resolve_chat("看下这个 traceId"),
+            lambda: self._resolve_chat("看下这个 traceId"),
         )
 
         self.assertTrue(result["unresolved"])
@@ -747,7 +859,7 @@ class ResolveChatMixedSearchTest(unittest.TestCase):
 
         result = self._with_lark_run(
             fake_lark_run,
-            lambda: send_feishu_card.resolve_chat(source_query),
+            lambda: self._resolve_chat(source_query),
         )
 
         self.assertTrue(result["unresolved"])
