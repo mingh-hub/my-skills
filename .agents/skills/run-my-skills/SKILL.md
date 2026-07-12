@@ -3,7 +3,7 @@ name: run-my-skills
 description: Run, test, and verify my-skills Python tools. Use when asked to smoke-test the tools, verify imports work, check cls_query URL building, or validate skill query anchors.
 ---
 
-A collection of Hermes AI agent skills (not a traditional app). "Running" it means verifying the Python CLI tools under `xh-smart/*/tools/` are functional. Drive it via `.claude/skills/run-my-skills/smoke.sh`.
+A collection of Hermes AI agent skills (not a traditional app). "Running" it means verifying the Python CLI tools under `xh-smart/*/tools/` are functional. Drive it via `.agents/skills/run-my-skills/smoke.sh`.
 
 All paths below are relative to the repo root.
 
@@ -16,7 +16,7 @@ All paths below are relative to the repo root.
 ## Run (agent path)
 
 ```bash
-bash .claude/skills/run-my-skills/smoke.sh
+bash .agents/skills/run-my-skills/smoke.sh
 ```
 
 Runs all tools in safe mode (no Chrome, no network calls). Output is a pass/fail summary.
