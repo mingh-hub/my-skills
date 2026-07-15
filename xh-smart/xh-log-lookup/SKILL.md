@@ -1,6 +1,6 @@
 ---
 name: xh-log-lookup
-description: 当用户需要查询生产或测试环境 CLS/Argus 日志、定位借款/下单/签约/权益/放款/还款问题，或需要 traceId/orderId/cid/contractNo/mobile/idNo 排查时使用。
+description: 当用户需要查询生产或测试环境 CLS/Argus 日志、定位借款/下单/签约/权益/Hold单/解H/放款/还款问题，或需要 traceId/orderId/cid/contractNo/mobile/idNo 排查时使用。
 allowed-tools:
   - Bash(python3 ${WORKBUDDY_SKILL_DIR}/scripts/cls_query.py *)
   - Bash(python3 ${WORKBUDDY_SKILL_DIR}/scripts/validate_query_anchors.py *)
@@ -211,7 +211,7 @@ python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py \
 | 意图 | 识别特征 | 查询策略 |
 |------|---------|---------|
 | 数据统计 | 统计、汇总、占比、成功率、总数、计数、健康检查、有多少、多少笔 | 先用 API 探测；<=500 精确，500-1000 按意图选择，>1000 默认采样 |
-| 流程追踪 | 借款、下单、放款、还款、权益、签约、绑卡、指定 `traceId`/`orderId`/`contractNo` | 路由到业务模块 reference，按入口日志定位 `traceId`，再查全链路 |
+| 流程追踪 | 借款、下单、Hold单、HOLD_ON、进H、解H、放款、还款、权益、签约、绑卡、指定 `traceId`/`orderId`/`contractNo` | 路由到业务模块 reference，按模块首查主键和入口日志追踪全链路 |
 | 健康检查 | 最近有没有异常、无具体标识符 | 使用业务模块 reference 的总览式查询步骤 |
 | SSO/登录 | 浏览器 fallback 跳转 Argus/JANUS/PMP 登录 | 使用 `xh-sso-access` |
 
@@ -221,7 +221,7 @@ python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py \
 
 用户问表中`别名`对应的整体日志、异常、健康情况时，不需要追问具体 `serviceName`；按同别名的全部 `serviceName` 查询。用户明确写出具体 `serviceName` 时，才只查该单个服务。
 
-业务意图优先级固定为：标识符查询 → 业务链路查询 → 服务健康查询 → 服务别名范围查询。用户提供 `traceId/orderId/cid/contractNo` 等标识符时优先按标识符查；用户描述"借款首页、借款内容、借款试算、预检、借款能力校验、首页不展示借款额度、客户申请借款、申请前轨迹"时，按申请前链路查询处理；用户只说"借款失败"且未明确订单、下单或反欺诈时，也默认按申请前链路查询处理；用户描述"下单、借款下单、下单成功、下单失败、订单失败、下单异常、下单链路异常、拦截"时，按正式下单链路查询处理并优先使用模块锚点。只有用户明确说"订单服务异常"、"订单组异常"、"客户订单组健康检查"、"`order-batch`"、"`order-batch-timing`"、"`mqResendJob`"、"服务健康"等服务侧语义时，才按服务健康或服务组范围处理。
+业务意图优先级固定为：标识符查询 → 业务链路查询 → 服务健康查询 → 服务别名范围查询。用户提供 `traceId/orderId/cid/contractNo` 等标识符时优先按标识符查；用户描述"借款首页、借款内容、借款试算、预检、借款能力校验、首页不展示借款额度、客户申请借款、申请前轨迹"时，按申请前链路查询处理；用户只说"借款失败"且未明确订单、下单或反欺诈时，也默认按申请前链路查询处理；用户描述"Hold单、H单、HOLD_ON、进入 H 单、进H、解H、继续hold、解H推送、取消Hold、Hold超时、超时转单、CRM催促解H"时，按 Hold 生命周期处理，优先级高于通用订单、放款、权益关键词；例如"拒就赔解H"走 Hold 模块，单独的"拒就赔"仍走原权益/放款路由。用户描述"下单、借款下单、下单成功、下单失败、订单失败、下单异常、下单链路异常、拦截"时，按正式下单链路查询处理并优先使用模块锚点。只有用户明确说"订单服务异常"、"订单组异常"、"客户订单组健康检查"、"`order-batch`"、"`order-batch-timing`"、"`mqResendJob`"、"服务健康"等服务侧语义时，才按服务健康或服务组范围处理。
 
 业务链路查询的结论必须围绕用户目标输出。通用服务 ERROR/WARN 可以作为背景风险提示，但必须单独标注为"服务背景异常"或"订单组服务异常"，不得汇总成业务链路异常。
 
@@ -229,9 +229,10 @@ python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py \
 |--------|---------|--------|
 | 签约、重签、重新签约、RESIGN、SIGNING_ISSUE、签约协议、支付协议、代扣协议、协议共享、协议号同步、绑卡、银行卡签约 | `references/modules/sign.md` | 签约模块 |
 | 登录后借款、借款首页、借款入口、借款内容、借款内容页、借款申请前、客户借款申请、借款能力预检、借款能力校验、预检、借款试算、试算、首页不展示借款额度、借款失败、行为轨迹、客户轨迹、贷前链路 | `references/modules/apply.md` | 借款申请模块 |
+| Hold单、H单、HOLD_ON、进入 H 单、进H、解H、继续hold、解H推送、取消Hold、Hold超时、超时转单、CRM催促解H、拒就赔解H | `references/modules/hold.md` | Hold 单模块 |
 | 下单、端内（自营）下单、api下单、订单、拦截、反欺诈 | `references/modules/order.md` | 下单模块 |
 | 权益、会员、VIP、优惠券、乐活卡、coupon、尊享卡、拒就赔、加速卡、获额卡、返现券 | `references/modules/benefit.md` | 权益模块 |
-| 放款、资金路由、route、解H、loki放款、拒就赔、提前结清、特项额度 | `references/modules/loan.md` | 放款模块 |
+| 放款、资金路由、route、loki放款、拒就赔、提前结清、特项额度 | `references/modules/loan.md` | 放款模块 |
 | 还款、扣款、逾期、代扣、结清、repay、债转、好友代付、聚合支付 | `references/modules/repay.md` | 还款模块 |
 
 匹配不到业务模块时，先问用户确认。
@@ -310,6 +311,7 @@ URL: `https://datasight-1300455117.internal.clsconsole.tencent-cloud.com/cls/sea
 
 - 借款申请前/首页/预检/试算/客户轨迹问题：读 `references/modules/apply.md`
 - 订单/正式下单/下单拦截/反欺诈问题：读 `references/modules/order.md`
+- Hold单/H单/HOLD_ON/进入 H 单/解H/继续Hold/取消/超时/重路由问题：读 `references/modules/hold.md`
 - 签约/重签/协议/绑卡问题：读 `references/modules/sign.md`
 - 权益/VIP/优惠券/乐活卡问题：读 `references/modules/benefit.md`
 - 放款/资金路由/loki/提前结清问题：读 `references/modules/loan.md`
