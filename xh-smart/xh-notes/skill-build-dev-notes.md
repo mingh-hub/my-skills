@@ -1,7 +1,8 @@
 # xh-log 需求迭代关键环节记录
 
-|时间|需求背景|需求描述|
-|------|------|------|
+|时间|需求背景|需求描述|需求验证|
+|------|------|------|------|
+|2026-07-23|飞书卡片原生表格在列内容较长时需要横向滑动，默认行高也可能裁剪单元格内容，影响日志结果阅读|将 WorkBuddy 版本的表格自适应配置同步到 `xh-log-lookup/scripts/send_feishu_card.py`：`build_table_element` 为所有 `columns[]` 显式设置 `width: "auto"`，表格顶层设置 `row_height: "auto"` 和 `row_max_height: "200px"`，同时覆盖 `table_data` 与 Markdown 表格渲染路径；`row_height: "auto"` 需要飞书客户端 v7.33 及以上，单元格内容超过 200px 时仍按 `row_max_height` 裁剪|![alt text](images/image3.png)|
 |2026-07-16 18:45|账务债转成功通知原归属还款模块，缺少独立的 `order-batch → order` 查询链路，期供代偿与合同债转分支容易被混判|新增独立 `debt.md` 债转模块，查询顺序明确为 `orderId → contractNo → 债转短信入口 → traceId 全链路`：只给订单号时先从 `order` 日志提取合同号，再用合同号定位 `com.xhqb.order.batch.service.AccountDebtTransferConsumer#consume` 的 `account-credit-transfer` MQ 入口并提取 traceId；结合一次、二次债转生产 MQ 报文补充 `originalAccountId/currentAccountId` 债转前后合同号、`ZC/ZZC` 一二次债转、前后渠道与资金计划、`billNo`、`claimType` 和 `transferType` 字段语义；补齐 `productClass` 过滤、`PERIOD` 提前返回、`CONTRACT` 回购/债转事件、`syncRepaySingleOrder` 订单与还款计划同步、失败诊断及健康检查；主控将债转、债权转让、期供代偿和债转回购从通用还款路由前置到 `debt.md`，新增 `test_debt_module.py` 保护文件引用、查询顺序、MQ 字段语义、分支语义和源码锚点|
 |2026-07-15 17:45|Hold 单排查原由放款模块零散承接，意图边界不清，且旧 `order-batch` 消费链路易被误作当前生产主链|新增独立 `hold.md` 模块，以 `orderId` 为默认主键，补齐进入 H 单、解 H 校验与推送、Loki 失败回 H、取消、超时转单、兜底重路由及 Job 健康检查；主控新增 Hold 关键词与优先路由，明确“拒就赔解H”与普通“拒就赔”的边界；`loan.md` 移除解 H 重复归属，并新增静态单测保护生产锚点和遗留链路边界|
 |2026-06-11 20:08|测试环境按需求分支分析代码|主控默认读`master`分支分析代码，生产没问题，但测试环境多跑需求开发分支（新增逻辑不在`master`），易据错分支得出错误结论。重构`update-master-branch.md`为`update-target-branch.md`：按环境选分支（生产`master`、测试需求分支），读代码前分支必须已确认（用户已给直接用、未给先问、答不上按`release-`命名约定+最近活跃度列候选），禁止默认`master`，测试结论须写明实际依据分支；同步SKILL.md主控规则|

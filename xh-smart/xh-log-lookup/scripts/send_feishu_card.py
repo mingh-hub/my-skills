@@ -384,7 +384,7 @@ def parse_markdown_tables(text):
 
 def build_table_element(columns, rows):
     col_defs = [
-        {"name": f"col_{i}", "display_name": h, "data_type": "markdown"}
+        {"name": f"col_{i}", "display_name": h, "data_type": "markdown", "width": "auto"}
         for i, h in enumerate(columns)
     ]
     row_datas = []
@@ -396,7 +396,9 @@ def build_table_element(columns, rows):
     return {
         "tag": "table",
         "columns": col_defs,
-        "rows": row_datas
+        "rows": row_datas,
+        "row_height": "auto",
+        "row_max_height": "200px"
     }
 
 
