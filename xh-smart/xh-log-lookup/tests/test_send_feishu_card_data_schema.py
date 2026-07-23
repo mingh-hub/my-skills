@@ -102,6 +102,16 @@ class ValidateCardDataTest(unittest.TestCase):
 
         self.assertIn("table_data[0].rows must be a list of lists", error["field_errors"])
 
+    def test_build_table_element_uses_auto_sizing(self):
+        table = send_feishu_card.build_table_element(
+            ["时间", "日志内容"],
+            [["17:30:00", "query contract failed"]],
+        )
+
+        self.assertTrue(all(column["width"] == "auto" for column in table["columns"]))
+        self.assertEqual(table["row_height"], "auto")
+        self.assertEqual(table["row_max_height"], "200px")
+
     def test_call_chain_item_must_be_object(self):
         error = self.assert_invalid({
             "call_chain": ["not an object"],
