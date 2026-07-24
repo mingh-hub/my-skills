@@ -1266,6 +1266,7 @@ def resolve_send_target(
     sender_key,
     default_private_key,
     default_private_chat_id,
+    allow_home_channel_fallback=False,
     resolver=resolve_chat,
     audit=None,
 ):
@@ -1337,21 +1338,8 @@ def resolve_send_target(
                 "error": "missing_resolved_chat_id",
             }
 
-        if default_private_chat_id:
-            send_meta["source_resolution"] = _source_resolution_meta(
-                resolved,
-                "default_private_chat",
-                default_private_key,
-            )
-            if audit:
-                audit.set_fallback(
-                    fallback_target="default_private_chat",
-                    fallback_reason=send_meta["source_resolution"].get("error", "no_match"),
-                    chat_source=default_private_key,
-                    env_key=default_private_key,
-                )
-            return default_private_chat_id, default_private_key, sender_info, send_meta, None
-
+        # 注入的当前会话（若 host 将来注入）优先于静态 HOME_CHANNEL，
+        # 即使未开启 opt-in 开关也生效。
         if env_chat_id:
             send_meta["source_resolution"] = _source_resolution_meta(
                 resolved,
@@ -1367,6 +1355,24 @@ def resolve_send_target(
                 )
             return env_chat_id, chat_key, sender_info, send_meta, None
 
+        # HOME_CHANNEL 静态兜底默认关闭：他人私聊反查不到时若堆到这里会全部
+        # 误发运维者 DM（本 bug 根因）。仅在无来源上下文的批量/定时调用显式
+        # 传 --allow-home-channel-fallback 时才启用。
+        if default_private_chat_id and allow_home_channel_fallback:
+            send_meta["source_resolution"] = _source_resolution_meta(
+                resolved,
+                "default_private_chat",
+                default_private_key,
+            )
+            if audit:
+                audit.set_fallback(
+                    fallback_target="default_private_chat",
+                    fallback_reason=send_meta["source_resolution"].get("error", "no_match"),
+                    chat_source=default_private_key,
+                    env_key=default_private_key,
+                )
+            return default_private_chat_id, default_private_key, sender_info, send_meta, None
+
         source_meta = _source_resolution_meta(resolved, "plain_text")
         if audit:
             audit.set_fallback(
@@ -1380,8 +1386,8 @@ def resolve_send_target(
             "error": "missing_private_target",
             "source_error": source_meta.get("error", "no_match"),
             "warning": (
-                "未搜索到可用的群聊 @Bot 或私聊 p2p 来源消息，且未配置 "
-                "WORKBUDDY_HOME_CHANNEL_CHAT_ID，无法确定发送目标"
+                "未搜索到可用的群聊 @Bot 或私聊 p2p 来源消息，无法确定发送目标；"
+                "降级为纯文本结论，由 WorkBuddy 回复通道送达发起人"
             ),
             "search_strategy": source_meta.get("search_strategy"),
             "matched_count": source_meta.get("matched_count", 0),
@@ -1390,9 +1396,6 @@ def resolve_send_target(
             "detail_errors": source_meta.get("detail_errors", []),
             "fallback": "plain_text",
         }
-
-    if default_private_chat_id:
-        return default_private_chat_id, default_private_key, sender_info, send_meta, None
 
     if env_chat_id:
         if sender_open_id:
@@ -1406,13 +1409,17 @@ def resolve_send_target(
             }
         return env_chat_id, chat_key, sender_info, send_meta, None
 
+    if default_private_chat_id and allow_home_channel_fallback:
+        return default_private_chat_id, default_private_key, sender_info, send_meta, None
+
     return None, "", sender_info, send_meta, {
         "status": "error",
         "error": "missing_chat",
         "message": (
-            "缺少发送目标：请传 --chat，或配置 WORKBUDDY_HOME_CHANNEL_CHAT_ID，"
-            "或由 WorkBuddy 注入 FEISHU_CURRENT_CHAT_ID / AGENT_CURRENT_CHAT_ID，"
-            "或显式使用 --resolve-chat --source-query。"
+            "缺少发送目标：请传 --chat，或由 WorkBuddy 注入 "
+            "FEISHU_CURRENT_CHAT_ID / AGENT_CURRENT_CHAT_ID，"
+            "或显式使用 --resolve-chat --source-query，"
+            "或配置 WORKBUDDY_HOME_CHANNEL_CHAT_ID 并显式传 --allow-home-channel-fallback。"
         ),
         "fallback": "plain_text",
     }
@@ -1623,9 +1630,13 @@ def main():
     parser.add_argument("--data", required=True,
                         help="JSON: {summary_fields, call_chain, analysis, log_count}")
     parser.add_argument("--debug-log-dir", default="",
-                        help="可选：将来源反查审计日志写入该目录，便于追踪 fallback 到 home channel 的原因")
+                        help="可选：将来源反查审计日志写入该目录，便于追踪 fallback（纯文本降级 / home channel）的原因")
     parser.add_argument("--quiet-success", action="store_true",
                         help="发送成功时不向 stdout 输出 status JSON，用于避免宿主应用重复回复")
+    parser.add_argument("--allow-home-channel-fallback", action="store_true",
+                        help="来源反查失败时允许兜底发送到 WORKBUDDY_HOME_CHANNEL_CHAT_ID；"
+                             "默认关闭（他人私聊反查不到会全部误发运维者 DM），"
+                             "仅供无来源上下文的批量/定时调用显式开启")
 
     args = parser.parse_args()
 
@@ -1654,6 +1665,7 @@ def main():
         sender_key,
         default_private_key,
         default_private_chat_id,
+        allow_home_channel_fallback=args.allow_home_channel_fallback,
         audit=audit,
     )
     if target_error:

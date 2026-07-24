@@ -60,6 +60,7 @@ class ResolveSendTargetTest(unittest.TestCase):
         resolver,
         env_chat_id="",
         default_private_chat_id="",
+        allow_home_channel_fallback=False,
         audit=None,
     ):
         return send_feishu_card.resolve_send_target(
@@ -75,6 +76,7 @@ class ResolveSendTargetTest(unittest.TestCase):
                 if default_private_chat_id else ""
             ),
             default_private_chat_id=default_private_chat_id,
+            allow_home_channel_fallback=allow_home_channel_fallback,
             resolver=resolver,
             audit=audit,
         )
@@ -151,7 +153,9 @@ class ResolveSendTargetTest(unittest.TestCase):
         self.assertEqual(error["error"], "missing_source_query")
         self.assertIn("--source-query", error["message"])
 
-    def test_unresolved_source_uses_default_private_chat(self):
+    def test_unresolved_source_degrades_to_plain_text(self):
+        # 反查阶梯全部跑完仍拿不到来源时，默认降级纯文本，不再堆到 HOME_CHANNEL，
+        # 即使 WORKBUDDY_HOME_CHANNEL_CHAT_ID 已配置。
         def resolver(query, window_minutes, audit=None):
             return {
                 "unresolved": True,
@@ -166,14 +170,15 @@ class ResolveSendTargetTest(unittest.TestCase):
             default_private_chat_id="oc_private",
         )
 
-        self.assertEqual(chat_id, "oc_private")
-        self.assertEqual(chat_source, "WORKBUDDY_HOME_CHANNEL_CHAT_ID")
+        self.assertIsNone(chat_id)
+        self.assertEqual(chat_source, "")
         self.assertEqual(sender_info, {})
-        self.assertEqual(send_meta["source_resolution"]["status"], "source_unresolved")
-        self.assertEqual(send_meta["source_resolution"]["fallback"], "default_private_chat")
-        self.assertIsNone(error)
+        self.assertEqual(error["status"], "unresolved")
+        self.assertEqual(error["error"], "missing_private_target")
+        self.assertEqual(error["source_error"], "no_match")
+        self.assertEqual(error["fallback"], "plain_text")
 
-    def test_unresolved_source_records_default_private_fallback_audit(self):
+    def test_unresolved_source_records_plain_text_fallback_audit(self):
         audit = send_feishu_card.RouteAudit()
 
         def resolver(query, window_minutes, audit=None):
@@ -191,14 +196,56 @@ class ResolveSendTargetTest(unittest.TestCase):
             audit=audit,
         )
 
+        self.assertIsNone(chat_id)
+        self.assertEqual(error["error"], "missing_private_target")
+        self.assertEqual(audit.data["fallback"]["fallback_target"], "plain_text")
+        self.assertEqual(audit.data["fallback"]["fallback_reason"], "no_match")
+
+    def test_unresolved_source_uses_home_channel_when_flag_enabled(self):
+        # 显式 opt-in 时保留旧的 HOME_CHANNEL 兜底（供无来源上下文的批量/定时调用）。
+        def resolver(query, window_minutes, audit=None):
+            return {
+                "unresolved": True,
+                "error": "no_match",
+                "matched_count": 0,
+                "search_strategy": "latest_query_mixed_15m",
+            }
+
+        chat_id, chat_source, sender_info, send_meta, error = self._select(
+            self._args(resolve_chat=True),
+            resolver,
+            default_private_chat_id="oc_private",
+            allow_home_channel_fallback=True,
+        )
+
         self.assertEqual(chat_id, "oc_private")
         self.assertEqual(chat_source, "WORKBUDDY_HOME_CHANNEL_CHAT_ID")
-        self.assertEqual(audit.data["fallback"]["fallback_target"], "default_private_chat")
-        self.assertEqual(audit.data["fallback"]["fallback_reason"], "no_match")
-        self.assertEqual(audit.data["fallback"]["env_key"], "WORKBUDDY_HOME_CHANNEL_CHAT_ID")
+        self.assertEqual(send_meta["source_resolution"]["fallback"], "default_private_chat")
         self.assertIsNone(error)
 
-    def test_resolved_source_without_chat_id_uses_default_private_chat(self):
+    def test_env_chat_preferred_over_home_channel_when_unresolved(self):
+        # 注入的当前会话（未来 host 若注入）优先于静态 HOME_CHANNEL，即使 opt-in 开关关闭。
+        def resolver(query, window_minutes, audit=None):
+            return {
+                "unresolved": True,
+                "error": "no_match",
+                "matched_count": 0,
+                "search_strategy": "latest_query_mixed_15m",
+            }
+
+        chat_id, chat_source, sender_info, send_meta, error = self._select(
+            self._args(resolve_chat=True),
+            resolver,
+            env_chat_id="oc_env",
+            default_private_chat_id="oc_private",
+        )
+
+        self.assertEqual(chat_id, "oc_env")
+        self.assertEqual(chat_source, "FEISHU_CURRENT_CHAT_ID")
+        self.assertEqual(send_meta["source_resolution"]["fallback"], "current_env_chat")
+        self.assertIsNone(error)
+
+    def test_resolved_source_without_chat_id_degrades_to_plain_text(self):
         def resolver(query, window_minutes, audit=None):
             return {
                 "chat_type": "p2p",
@@ -213,11 +260,10 @@ class ResolveSendTargetTest(unittest.TestCase):
             default_private_chat_id="oc_private",
         )
 
-        self.assertEqual(chat_id, "oc_private")
-        self.assertEqual(chat_source, "WORKBUDDY_HOME_CHANNEL_CHAT_ID")
-        self.assertEqual(sender_info, {})
-        self.assertEqual(send_meta["source_resolution"]["error"], "missing_resolved_chat_id")
-        self.assertIsNone(error)
+        self.assertIsNone(chat_id)
+        self.assertEqual(error["status"], "unresolved")
+        self.assertEqual(error["error"], "missing_private_target")
+        self.assertEqual(error["source_error"], "missing_resolved_chat_id")
 
     def test_unresolved_source_falls_back_to_current_env_chat_without_private(self):
         def resolver(query, window_minutes, audit=None):
