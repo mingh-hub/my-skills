@@ -58,7 +58,7 @@ disable: false
 - 本技能只处理已由 WorkBuddy/Claw 触发的请求：私聊 Tom，或群聊中明确 `@Tom` / 被判定为对 Tom 的直接提及。
 - 如果运行上下文显示这是群聊消息且未直接提及 Tom，应立即停止；不要查询 CLS、不要读取本地代码、不要发送飞书卡片，也不要输出诊断结论。
 - 私聊 Tom 时不需要 `@Tom`，直接按本技能流程处理，并优先把飞书卡片发送回该私聊会话。
-- 触发后，发送目标优先是当前提问来源；无法确认来源时，若已配置 WorkBuddy 默认私聊目标则发送到该私聊，否则才允许在当前会话输出纯文本 fallback。
+- 触发后，发送目标优先是当前提问来源；反查阶梯全部跑完仍无法确认来源时，默认降级为当前会话纯文本 fallback（由 WorkBuddy 回复通道送达发起人），不再自动堆到 `WORKBUDDY_HOME_CHANNEL_CHAT_ID`（该静态兜底仅在显式传 `--allow-home-channel-fallback` 时启用）。
 
 ### 数据统计强制约束
 
@@ -178,7 +178,7 @@ SQL 构造顺序：
 技能被触发后，在输出最终结论前执行以下流程：
 
 1. **必须先调用发送脚本**：最终结论生成后，先执行 `send_feishu_card.py --quiet-success`。不要先输出普通文本结论；只有发送脚本返回非 0 或明确失败状态时，才输出纯文本 fallback。
-2. **来源优先级**：`--chat`（人工显式指定）> `--resolve-chat --source-query "{用户原始问题}"` 反查选定的 `chat_id` > `WORKBUDDY_HOME_CHANNEL_CHAT_ID`（反查失败兜底）> 纯文本 fallback。`FEISHU_CURRENT_CHAT_ID` / `AGENT_CURRENT_CHAT_ID` 等环境变量不能覆盖或短路成功反查结果。WorkBuddy 正常路径必须用 `--resolve-chat`。
+2. **来源优先级**：`--chat`（人工显式指定）> `--resolve-chat --source-query "{用户原始问题}"` 反查选定的 `chat_id` > `FEISHU_CURRENT_CHAT_ID` / `AGENT_CURRENT_CHAT_ID`（host 若注入的当前会话）> 纯文本 fallback。反查成功时环境变量不能覆盖或短路结果。`WORKBUDDY_HOME_CHANNEL_CHAT_ID` **不再自动兜底**——他人私聊反查不到时若堆到这里会全部误发运维者 DM，仅在显式传 `--allow-home-channel-fallback`（供无来源上下文的批量/定时调用）时才用。WorkBuddy 正常路径必须用 `--resolve-chat`。
 3. **`--source-query` 取值约束**：必须是触发技能的原始用户消息原文；禁止传分析摘要、关键切片、卡片标题或改写后的问题。
 4. **来源安全**：群聊只能选 @Tom 的消息作为发送目标；未 @Tom 的同文本群消息只能作为噪声过滤。退化搜索（`@Tom` 候选池 + 相似度选择）仍必须通过群聊 @Tom 校验，不能绕过该规则。
 
@@ -196,7 +196,7 @@ python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py \
 退出码语义（行为护栏，不可违反）：
 
 - 退出码 0 → 视为卡片已发送，当前会话**不得**再输出诊断结论、摘要、证据、CLS 链接或卡片内容；宿主强制要求非空回复时，只输出 `已发送飞书卡片。`。
-- 退出码非 0 或 `status: "unresolved"` → 当前会话输出飞书兼容纯文本结论并说明失败原因；`error=missing_private_target` 时提示配置 `WORKBUDDY_HOME_CHANNEL_CHAT_ID`。
+- 退出码非 0 或 `status: "unresolved"` → 当前会话输出飞书兼容纯文本结论。`error=missing_private_target`（退出码 2）是**私聊来源无法反查时的正常降级**（`--as user` 搜不到他人 p2p），不是配置缺失：直接输出纯文本结论，由 WorkBuddy 回复通道送达发起人，无需提示配置 `WORKBUDDY_HOME_CHANNEL_CHAT_ID`。其余退出码非 0 情形按失败降级并说明原因。
 - 最终结论已用普通文本输出但本轮无 `send_feishu_card.py` 调用记录 → 视为违反输出规则。
 
 **发送前自检（每轮必须逐条确认，缺一即停下补做，不得跳过）**：
