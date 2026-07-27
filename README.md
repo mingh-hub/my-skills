@@ -41,8 +41,7 @@ my-skills/
 
 | 记录 | 说明 |
 | ---- | ---- |
-| `skill-build-dev-notes.md` | 需求迭代和关键变更记录 |
-| `skill-build-bug-notes.md` | 已定位问题、根因和修复方案 |
+| `skill-build-dev-notes.md` | 需求迭代、关键变更及 Bug 修复记录 |
 | `skill-build-apply-notes.md` | 借款申请模块业务梳理和建模草稿 |
 | `skill-build-sign-notes.md` | 签约模块业务梳理和建模草稿 |
 
