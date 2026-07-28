@@ -1426,7 +1426,8 @@ def resolve_send_target(
 
 
 def build_card(title, color, cls_url, cls_url_expanded, data,
-               sender_open_id="", sender_name="", chat_type="group"):
+               sender_open_id="", sender_name="", chat_type="group",
+               content_mode="log"):
     elements = []
 
     if sender_open_id and chat_type == "group":
@@ -1456,7 +1457,7 @@ def build_card(title, color, cls_url, cls_url_expanded, data,
         if log_count > 20:
             chain_lines.append(f"\n... \u5171 **{log_count}** \u6761\u65e5\u5fd7\uff0c\u4ec5\u5c55\u793a\u6700\u8fd1 10 \u6761")
         elements.append({"tag": "div", "text": {"tag": "lark_md", "content": "\n".join(chain_lines)}})
-    elif log_count == 0 and not summary_fields:
+    elif content_mode == "log" and log_count == 0 and not summary_fields:
         elements.append({
             "tag": "div",
             "text": {
@@ -1490,7 +1491,12 @@ def build_card(title, color, cls_url, cls_url_expanded, data,
             "text": {"tag": "lark_md", "content": " \u00b7 ".join(links)}
         })
 
-    note_text = f"\U0001f550 \u5171\u67e5\u8be2\u5230 {log_count} \u6761\u65e5\u5fd7 | {time.strftime('%H:%M')}"
+    if content_mode == "business-logic":
+        note_text = f"🧭 本地业务逻辑分析 | {time.strftime('%H:%M')}"
+    elif content_mode == "combined":
+        note_text = f"🧭 源码 + 日志联合分析 · {log_count} 条日志 | {time.strftime('%H:%M')}"
+    else:
+        note_text = f"\U0001f550 \u5171\u67e5\u8be2\u5230 {log_count} \u6761\u65e5\u5fd7 | {time.strftime('%H:%M')}"
     elements.append({
         "tag": "div",
         "text": {"tag": "lark_md", "content": f"_{note_text}_"}
@@ -1617,10 +1623,13 @@ def main():
     parser.add_argument("--at-sender", action="store_true",
                         help="群聊卡片中 @提问者")
     parser.add_argument("--title", required=True,
-                        help="卡片标题 (格式: [emoji] 场景简述 \u00b7 时间范围)")
+                        help="卡片标题")
     parser.add_argument("--color", default="blue",
                         choices=["red", "yellow", "green", "blue"],
                         help="red=ERROR/阻断, yellow=WARN/拦截, green=全部正常, blue=常规")
+    parser.add_argument("--content-mode", default="log",
+                        choices=["log", "business-logic", "combined"],
+                        help="卡片内容模式：日志、本地业务逻辑或源码+日志联合分析")
     parser.add_argument("--cls-url", default=None,
                         help="CLS 查询 URL (\U0001f517 \u8df3\u8f6c\u94fe\u63a5\u6309\u94ae)")
     parser.add_argument("--cls-url-expanded", default=None,
@@ -1628,7 +1637,7 @@ def main():
     parser.add_argument("--raw-text", default=None,
                         help="CLS 原始文本，自动解析为 call_chain（替代手动构建 --data 中的 call_chain）")
     parser.add_argument("--data", required=True,
-                        help="JSON: {summary_fields, call_chain, analysis, log_count}")
+                        help="JSON: {summary_fields, call_chain, log_count, table_data, analysis}")
     parser.add_argument("--debug-log-dir", default="",
                         help="可选：将来源反查审计日志写入该目录，便于追踪 fallback（纯文本降级 / home channel）的原因")
     parser.add_argument("--quiet-success", action="store_true",
@@ -1698,9 +1707,17 @@ def main():
                           data,
                           sender_open_id=sender_info.get("sender_open_id", ""),
                           sender_name=sender_info.get("sender_name", ""),
-                          chat_type=sender_info.get("chat_type", "group"))
+                          chat_type=sender_info.get("chat_type", "group"),
+                          content_mode=args.content_mode)
     else:
-        card = build_card(args.title, args.color, args.cls_url, args.cls_url_expanded, data)
+        card = build_card(
+            args.title,
+            args.color,
+            args.cls_url,
+            args.cls_url_expanded,
+            data,
+            content_mode=args.content_mode,
+        )
 
     send_card(
         chat_id,
