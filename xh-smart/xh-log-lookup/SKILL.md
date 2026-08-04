@@ -266,7 +266,7 @@ python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py \
 
 用户问表中`别名`对应的整体日志、异常、健康情况时，不需要追问具体 `serviceName`；按同别名的全部 `serviceName` 查询。用户明确写出具体 `serviceName` 时，才只查该单个服务。
 
-业务意图优先级固定为：标识符查询 → 业务链路查询 → 服务健康查询 → 服务别名范围查询。用户提供 `traceId/orderId/cid/contractNo` 等标识符时优先按标识符查；用户描述"借款首页、借款内容、借款试算、预检、借款能力校验、首页不展示借款额度、客户申请借款、申请前轨迹"时，按申请前链路查询处理；用户只说"借款失败"且未明确订单、下单或反欺诈时，也默认按申请前链路查询处理；用户描述"Hold单、H单、HOLD_ON、进入 H 单、进H、解H、继续hold、解H推送、取消Hold、Hold超时、超时转单、CRM催促解H"时，按 Hold 生命周期处理，优先级高于通用订单、放款、权益关键词；例如"拒就赔解H"走 Hold 模块，单独的"拒就赔"仍走原权益/放款路由。用户描述"债转、债权转让、合同债转、期供代偿、债转回购"时，按账务债转成功通知后的 `order-batch → order` 链路处理，优先级高于通用还款、扣款关键词。用户描述"下单、借款下单、下单成功、下单失败、订单失败、下单异常、下单链路异常、拦截"时，按正式下单链路查询处理并优先使用模块锚点。只有用户明确说"订单服务异常"、"订单组异常"、"客户订单组健康检查"、"`order-batch`"、"`order-batch-timing`"、"`mqResendJob`"、"服务健康"等服务侧语义时，才按服务健康或服务组范围处理。
+业务意图优先级固定为：标识符查询 → 业务链路查询 → 服务健康查询 → 服务别名范围查询。用户提供 `traceId/orderId/cid/contractNo` 等标识符时优先按标识符查；用户描述"借款首页、借款内容、借款试算、预检、借款能力校验、首页不展示借款额度、客户申请借款、申请前轨迹"时，按申请前链路查询处理；用户只说"借款失败"且未明确订单、下单或反欺诈时，也默认按申请前链路查询处理；用户描述"Hold单、H单、HOLD_ON、进入 H 单、进H、解H、继续hold、解H推送、取消Hold、Hold超时、超时转单、CRM催促解H"时，按 Hold 生命周期处理，**Hold 明确优先于通用订单、放款**；例如"拒就赔解H"走 Hold 模块，单独的"拒就赔"走权益模块。用户描述"债转、债权转让、合同债转、期供代偿、债转回购"时，按账务债转成功通知后的 `order-batch → order` 链路处理，优先级高于通用还款、扣款关键词。用户描述"下单、借款下单、下单成功、下单失败、订单失败、下单异常、下单链路异常、拦截"时，按正式下单链路查询处理并优先使用模块锚点。只有用户明确说"订单服务异常"、"订单组异常"、"客户订单组健康检查"、"`order-batch`"、"`order-batch-timing`"、"`mqResendJob`"、"服务健康"等服务侧语义时，才按服务健康或服务组范围处理。
 
 业务链路查询的结论必须围绕用户目标输出。通用服务 ERROR/WARN 可以作为背景风险提示，但必须单独标注为"服务背景异常"或"订单组服务异常"，不得汇总成业务链路异常。
 
@@ -277,9 +277,9 @@ python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py \
 | Hold单、H单、HOLD_ON、进入 H 单、进H、解H、继续hold、解H推送、取消Hold、Hold超时、超时转单、CRM催促解H、拒就赔解H | `references/modules/hold.md` | Hold 单模块 |
 | 下单、端内（自营）下单、api下单、订单、拦截、反欺诈 | `references/modules/order.md` | 下单模块 |
 | 权益、会员、VIP、优惠券、乐活卡、coupon、尊享卡、拒就赔、加速卡、获额卡、返现券 | `references/modules/benefit.md` | 权益模块 |
-| 放款、资金路由、route、loki放款、拒就赔、提前结清、特项额度 | `references/modules/loan.md` | 放款模块 |
+| 放款、放款日志、放款失败、资金路由、route、loki放款、换资方、缓冲池、再分发、缓冲池出池、特项额度 | `references/modules/loan.md` | 放款模块 |
 | 债转、债权转让、合同债转、债转成功通知、期供代偿、债转回购 | `references/modules/debt.md` | 债转模块 |
-| 还款、扣款、逾期、代扣、结清、repay、好友代付、聚合支付 | `references/modules/repay.md` | 还款模块 |
+| 还款、扣款、逾期、代扣、结清、提前结清、repay、好友代付、聚合支付 | `references/modules/repay.md` | 还款模块 |
 
 匹配不到业务模块时，先问用户确认。
 
@@ -392,9 +392,9 @@ URL: `https://datasight-1300455117.internal.clsconsole.tencent-cloud.com/cls/sea
 - Hold单/H单/HOLD_ON/进入 H 单/解H/继续Hold/取消/超时/重路由问题：读 `references/modules/hold.md`
 - 签约/重签/协议/绑卡问题：读 `references/modules/sign.md`
 - 权益/VIP/优惠券/乐活卡问题：读 `references/modules/benefit.md`
-- 放款/资金路由/loki/提前结清问题：读 `references/modules/loan.md`
+- 放款/资金路由/loki/缓冲池再分发问题：读 `references/modules/loan.md`
 - 债转/债权转让/合同债转/期供代偿/债转回购问题：读 `references/modules/debt.md`
-- 还款/扣款/结清/逾期问题：读 `references/modules/repay.md`
+- 还款/扣款/结清/提前结清/逾期问题：读 `references/modules/repay.md`
 - `references/common/update-target-branch.md`：只复用生产/测试目标分支选择和结论标注；本技能不执行其中的仓库更新步骤
 - `references/common/cls-local-chrome-access.md`：备用：本地 Chrome 专用窗口访问 CLS
 - `references/common/cls-dom-extraction.md`：全文提取、加载更多、CK/CS 合同号解析
