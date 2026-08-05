@@ -1,20 +1,22 @@
 ---
 name: xh-log-lookup
-description: 当用户需要查询生产或测试环境 CLS/Argus 日志、定位借款/下单/签约/权益/Hold单/解H/放款/还款/债转问题，或需要 traceId/orderId/cid/contractNo/mobile/idNo 排查时使用。
+description: 当用户需要查询生产或测试环境 CLS/Argus 日志、定位借款/下单/签约/权益/Hold单/解H/放款/还款/债转问题，使用 traceId/orderId/cid/contractNo/mobile/idNo 排查，或基于本地源码梳理业务流程、调用链、条件分支、字段语义时使用。
 allowed-tools:
   - Bash(python3 ${WORKBUDDY_SKILL_DIR}/scripts/cls_query.py *)
   - Bash(python3 ${WORKBUDDY_SKILL_DIR}/scripts/validate_query_anchors.py *)
   - Bash(python3 ${WORKBUDDY_SKILL_DIR}/scripts/resolve_workspace.py *)
+  - Bash(python3 ${WORKBUDDY_SKILL_DIR}/scripts/source_inspect.py *)
   - Bash(python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py *)
+  - Bash(python3 ${WORKBUDDY_SKILL_DIR}/scripts/resolve_hermes_session.py *)
   - Bash(LARK_CLI_NO_PROXY=1 lark-cli im +messages-search *)
   - Bash(LARK_CLI_NO_PROXY=1 lark-cli im +messages-mget *)
   - Bash(LARK_CLI_NO_PROXY=1 lark-cli im +messages-send *)
 disable: false
 ---
 
-# xh-log-lookup — 日志查询主控
+# xh-log-lookup — 日志与业务逻辑分析主控
 
-处理生产/测试环境日志查询、业务异常排查、CLS 结果及根因分析，默认优先通过飞书卡片输出，失败时降级为飞书兼容文本。主控只负责意图分类、路由、强制约束和工具调用；业务细节在 `references/modules/` 和 `references/common/` 中。
+处理生产/测试环境日志查询、业务异常排查，以及借款、下单、签约、权益、Hold、放款、还款、债转八个模块的本地业务逻辑分析。结论必须优先通过飞书卡片输出，失败时降级为飞书兼容文本。主控只负责意图分类、模式选择、业务路由、强制约束和工具调用；业务细节在 `references/modules/` 和 `references/common/` 中。
 
 ## 日志服务名和项目名映射关系表
 
@@ -60,9 +62,44 @@ disable: false
 - 私聊 Tom 时不需要 `@Tom`，直接按本技能流程处理，并优先把飞书卡片发送回该私聊会话。
 - 触发后，发送目标优先是当前提问来源；反查阶梯全部跑完仍无法确认来源时，默认降级为当前会话纯文本 fallback（由 WorkBuddy 回复通道送达发起人），不再自动堆到 `WORKBUDDY_HOME_CHANNEL_CHAT_ID`（该静态兜底仅在显式传 `--allow-home-channel-fallback` 时启用）。
 
+### 分析模式选择
+
+本技能只处理上述八个业务模块的分析和解释请求，**不处理代码修改、功能开发、重构或修 Bug**。用户要求修改实现时退出本技能，交给正常编码流程。
+
+模式优先级如下：
+
+1. 用户明确说“不查日志”“只看代码”“只看本地源码”时，强制使用 `local_logic`。
+2. 用户同时要求梳理逻辑和核对线上/测试实际情况时，使用 `combined`。
+3. 用户明确要求查日志、给出环境/时间窗口/实例标识符，或要求定位实际故障时，使用 `log_diagnosis`。
+4. 用户仅询问业务流程、调用链、条件分支、字段语义、类或方法职责时，使用 `local_logic`。
+
+### `local_logic`
+
+- 按“业务路由”选择唯一 module reference，reference 只用于导航；最终结论必须通过 `source_inspect.py` 回到实际源码验证。
+- 先执行 `source_inspect.py --project {项目名} --status`，记录仓库、当前分支、Commit 和工作区状态；未指定分支时读取当前本地分支及未提交工作区内容，不 fetch、不 pull、不 checkout。
+- 用户明确指定分支但当前分支不一致时，停止源码分析并请用户自行切换或确认使用当前分支；本技能不得代为切换。
+- 用 `--search` 定位类、方法、字段、MQ/RPC 调用和条件分支，再用 `--file --start-line --end-line` 读取必要片段。禁止凭 reference 内容冒充当前源码结论。
+- **禁止调用 `cls_query.py`**。用户明确不查日志时，不得因结论不完整而擅自升级到日志查询。
+- 源码路径失效时先执行 `resolve_workspace.py --check`；无法唯一定位时停止分析，发送阻塞说明，不得猜测业务逻辑。
+- 最终调用 `send_feishu_card.py --content-mode business-logic`。`summary_fields` 必须包含：业务模块、仓库、分支、Commit、工作区状态、分析范围；`table_data` 至少包含“步骤 / 类或方法 / 关键逻辑”；`analysis` 写核心结论、外部依赖、未确认项和源码依据。
+
+### `log_diagnosis`
+
+- 保留现有 CLS/Argus 查询、统计完整性、SQL 条件下沉、锚点校验和日志卡片规则。
+- 出现**日志无结果、证据不足、业务入口不明确、查询锚点失效、字段语义无法确认或无法仅凭日志确定根因**任一情况时，自动升级为 `combined`，无需再次询问用户。
+- 日志证据已经足以支持结论时，继续使用 `send_feishu_card.py --content-mode log`。
+
+### `combined`
+
+- 先读取源码建立预期业务链路和判断条件，再查询日志验证实际执行路径；禁止先给日志下结论再补源码包装。
+- 源码分析使用与 `local_logic` 相同的 `source_inspect.py` 只读流程；日志分析继续遵守所有 CLS 强制规则，但分支处理以本节只读规则为准，**不执行 `update-target-branch.md` 的 fetch、stash、checkout 或 pull 步骤**。
+- 生产源码目标分支默认是 `master`；测试源码目标分支必须由用户给出或确认。用 `--status` 比较当前分支与目标分支；**当前分支与目标分支不一致**或测试分支未经确认时，标记“源码验证阻塞”，继续交付可用日志证据，但不得用当前源码给出确定联合结论。
+- 源码不可用时可继续交付已有日志证据，但必须标记“源码验证阻塞”；日志不可用时只能输出已验证的源码预期逻辑，不得声称实际请求按该路径执行。
+- 最终调用 `send_feishu_card.py --content-mode combined`，同时提供源码 `table_data`、日志 `call_chain/log_count`、CLS URL 和联合结论。
+
 ### 数据统计强制约束
 
-本节规则优先级高于所有其他规则。违反本节规则等同于输出错误结论。
+本节只适用于 `log_diagnosis` 和 `combined`，规则优先级高于这两种模式的其他日志规则。违反本节规则等同于输出错误结论。
 
 **触发条件**：用户意图含 `统计`、`汇总`、`占比`、`成功率`、`总数`、`计数`、`分布`、`趋势`、`健康检查`、`有多少`、`多少笔`、`有几条`、`总共`、`一共`、`百分比`、`比例`、`平均`、`最多`、`最少` 任一关键词时，自动进入**统计模式**。健康检查（业务模块 reference 的 Step 0-4）**始终**属于统计模式。
 
@@ -94,7 +131,7 @@ disable: false
   - **用户未提供 traceId**：按后续步骤用业务标识符定位日志后，从提取的 innerText 中识别 `traceid` 列值（通常为 16 位或 32 位 hex，如 `110e6550d81fb1bc`、`b4d5cc63c42611adb4d5cc63c42611ad`），再执行 `traceId:"{提取值}"` 做全链路分析；不要自行截断成前 16 位
   - **traceId ≠ TID**：两者是不同的索引字段，不要混淆。以 `traceid` 列为准
 - 日志无法获取明确结果时可结合项目代码
-- 每次会话首次执行**代码锚点**校验前，按 `references/common/update-target-branch.md` 更新对应服务仓库到**日志所属环境的分支**（路径见映射表`仓库路径`列）：生产读 `master`，测试环境读代码前分支**必须已确认**（用户已在提问中给出分支名则直接用，否则先问；禁止默认 `master`），测试环境结论须写明实际依据的分支名。
+- 每次会话首次执行**代码锚点**校验前，只复用 `references/common/update-target-branch.md` 的目标分支选择与结论标注规则，不执行其中的仓库更新步骤。生产目标分支为 `master`；测试环境读代码前分支**必须已确认**（用户已给出则直接用，否则先问；禁止默认 `master`）。用 `source_inspect.py --status` 只读核对；当前分支不匹配时标记源码验证阻塞，不 fetch、不 stash、不 checkout、不 pull。
 - 本组范围查询时，服务范围以"日志服务名和项目名映射关系表"的 `serviceName` 列为准；需要看代码时，再用同一行的`项目名`和`仓库路径`定位源码。
 - 分析要查的数据是否在子模块的流程追踪入口，是的话可以通过日志锚点查询，不是的话分析本地项目路径，确认查询`sql`,服务名参考上面`日志服务名和项目名映射关系表`；子模块入口表格里的推荐查询只是通过代码锚点校验后的首查模板，不是唯一真相。
 - 执行入口表格推荐查询前，先校验 `方法入口`、`serviceName` 和固定 `message` 片段是否仍能和当前代码匹配；可用 `scripts/validate_query_anchors.py` 辅助检查。
@@ -154,18 +191,24 @@ SQL 构造顺序：
 
 > 卡片必须先调发送脚本、退出码语义、来源反查均见下方「来源识别与飞书卡片发送」。本段只约束卡片内容契约和纯文本 fallback 格式。
 
-- 飞书卡片格式：可用 native table、lark_md、代码块、链接、按钮；群聊卡片正文 @ 提问者，私聊不需要。CLS 链接含 `topic_id`/`time`/`queryBase64`，结果集中在单线程时只带 `traceId` 即可。
+- 飞书卡片格式：可用 native table、lark_md、代码块、链接、按钮；群聊卡片正文 @ 提问者，私聊不需要。
+- 内容模式：
+  - `log`：日志结论；CLS 链接含 `topic_id`/`time`/`queryBase64`，结果集中在单线程时只带 `traceId` 即可。
+  - `business-logic`：纯源码结论；不得伪造 CLS 查询、日志条数或“无匹配日志”文案。
+  - `combined`：源码与日志联合结论；必须区分“源码预期逻辑”和“日志实际证据”。
 - `send_feishu_card.py --data` schema 强制契约（违反则脚本以 `invalid_data_schema` 拒收）：
   - 顶层**只允许** `summary_fields`、`call_chain`、`log_count`、`table_data`、`analysis`；禁止 `summary`、`time_range`、`total_logs`、`error_breakdown`、`root_cause` 等自由字段。
   - 类型：`summary_fields`=`[{label,value}]`；`call_chain`=非空日志对象列表；`log_count`=`>=0` 整数；`table_data`=`[{headers:list, rows:list[list]}]`；`analysis`=字符串。
   - `call_chain` 内部字段自适应渲染（推荐 `level/time/service/content`，CLS 原生 `timestamp/serviceName/message/traceId` 也可，未识别字段追加成 `key=value`）。
   - `log_count > 0` 时至少提供 `summary_fields`/`call_chain`/`table_data`/`analysis` 之一；只有 `log_count==0` 且无内容才渲染"无匹配日志"。
-  - 这是渲染契约不是统计专用 schema：单线程/非统计查询用 `call_chain` 表链路、`analysis` 表根因、`summary_fields` 放 `traceId/orderId`，用这五个 key 就不会被拦。
+  - 这是通用渲染契约：日志用 `call_chain` 表实际链路；源码分析用 `table_data` 表调用步骤和条件分支；`analysis` 表结论；`summary_fields` 放标识符或源码上下文。
 - 纯文本 fallback 格式契约：
   - 允许：普通文本、换行、分段、短横线列表、数字编号、粗体标签、`[文本](URL)` 链接、@。
   - 禁止：Markdown/HTML 表格、表格分隔线、代码块、复杂嵌套列表、卡片语法。
   - 自检：出现 `|---|`、任意以 `|` 分隔多列的行 → 改写成逐行列表；出现 fenced code block → 改写成普通文本。
-- 卡片或纯文本均须包含：查了什么代码/日志前缀、CLS 查询语句/topic/时间范围、命中摘要与未命中证据、完整性状态（`loaded_count` vs `log_count`）、关键节点时间（`timestamp` 格式）、CLS URL、卡片发送状态。
+- `log` 卡片或纯文本必须包含：日志前缀、CLS 查询语句/topic/时间范围、命中摘要与未命中证据、完整性状态（`loaded_count` vs `log_count`）、关键节点时间、CLS URL、卡片发送状态。
+- `business-logic` 卡片或纯文本必须包含：业务模块、仓库、分支、Commit、工作区状态、分析范围、源码文件与行号、核心调用链、条件分支、外部依赖、未确认项、卡片发送状态；不要求任何 CLS 字段。
+- `combined` 必须同时满足上述源码证据与日志证据要求，并明确哪些结论来自源码、哪些由日志验证。
 
 ### 来源识别与飞书卡片发送
 
@@ -178,11 +221,39 @@ SQL 构造顺序：
 技能被触发后，在输出最终结论前执行以下流程：
 
 1. **必须先调用发送脚本**：最终结论生成后，先执行 `send_feishu_card.py --quiet-success`。不要先输出普通文本结论；只有发送脚本返回非 0 或明确失败状态时，才输出纯文本 fallback。
-2. **来源优先级**：`--chat`（人工显式指定）> `--resolve-chat --source-query "{用户原始问题}"` 反查选定的 `chat_id` > `FEISHU_CURRENT_CHAT_ID` / `AGENT_CURRENT_CHAT_ID`（host 若注入的当前会话）> 纯文本 fallback。反查成功时环境变量不能覆盖或短路结果。`WORKBUDDY_HOME_CHANNEL_CHAT_ID` **不再自动兜底**——他人私聊反查不到时若堆到这里会全部误发运维者 DM，仅在显式传 `--allow-home-channel-fallback`（供无来源上下文的批量/定时调用）时才用。WorkBuddy 正常路径必须用 `--resolve-chat`。
+2. **来源优先级**：Hermes 直传（`resolve_hermes_session.py` → `--user-id`/`--chat-id`）> `--chat`（人工显式指定）> `--resolve-chat --source-query "{用户原始问题}"` 反查选定的 `chat_id` > `FEISHU_CURRENT_CHAT_ID` / `AGENT_CURRENT_CHAT_ID`（host 若注入的当前会话）> 纯文本 fallback。反查成功时环境变量不能覆盖或短路结果。`WORKBUDDY_HOME_CHANNEL_CHAT_ID` **不再自动兜底**——他人私聊反查不到时若堆到这里会全部误发运维者 DM，仅在显式传 `--allow-home-channel-fallback`（供无来源上下文的批量/定时调用）时才用。WorkBuddy 正常路径必须用 `--resolve-chat`。
 3. **`--source-query` 取值约束**：必须是触发技能的原始用户消息原文；禁止传分析摘要、关键切片、卡片标题或改写后的问题。
 4. **来源安全**：群聊只能选 @Tom 的消息作为发送目标；未 @Tom 的同文本群消息只能作为噪声过滤。退化搜索（`@Tom` 候选池 + 相似度选择）仍必须通过群聊 @Tom 校验，不能绕过该规则。
 
-发送命令（保留 `--resolve-chat`、`--source-query`、`--debug-log-dir`、`--quiet-success`）：
+发送命令按运行环境二选一；均保留 `--debug-log-dir`、`--quiet-success`，并按模式选择 `--content-mode`。
+
+**Hermes 环境**：先执行 helper 并读取 JSON；退出码 2、私聊 `open_id` 为空或输出无法解析时，改走下方反查模板。
+
+```bash
+python3 ${WORKBUDDY_SKILL_DIR}/scripts/resolve_hermes_session.py --resolve-open-id
+```
+
+- `chat_type=dm`：把 `open_id` 传给 `--user-id`，并固定 `--chat-type p2p`，私聊不加 `--at-sender`。
+- `chat_type=group`：把 `chat_id` 传给 `--chat-id`，并固定 `--chat-type group`。提问者 ID 优先使用 `ou_` 开头的 `sender_open_id_raw`；否则使用 `user_id` 并传 `--sender-id-type user_id`。转换失败时仅发群，不生成 @。
+
+```bash
+# 私聊直发
+python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py \
+  --user-id "ou_xxx" --chat-type p2p \
+  --debug-log-dir "/private/tmp/xh-log-lookup-route" \
+  --quiet-success --content-mode "{log|business-logic|combined}" \
+  --title "..." --color "..." --data "..."
+
+# 群聊直发并 @ 提问者
+python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py \
+  --chat-id "oc_xxx" --chat-type group \
+  --sender-open-id "{ou_xxx|租户 user_id}" --sender-id-type user_id \
+  --debug-log-dir "/private/tmp/xh-log-lookup-route" \
+  --at-sender --quiet-success --content-mode "{log|business-logic|combined}" \
+  --title "..." --color "..." --data "..."
+```
+
+**WorkBuddy、非 Hermes 或 Hermes helper 降级**：使用消息原文反查。
 
 ```bash
 python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py \
@@ -190,6 +261,7 @@ python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py \
   --resolve-window-minutes 15 \
   --debug-log-dir "/private/tmp/xh-log-lookup-route" \
   --at-sender --quiet-success \
+  --content-mode "{log|business-logic|combined}" \
   --title "..." --color "..." --data "..."
 ```
 
@@ -210,8 +282,10 @@ python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py \
 
 | 意图 | 识别特征 | 查询策略 |
 |------|---------|---------|
+| 本地业务逻辑 | 不查日志、只看代码、本地源码、业务流程、调用链、条件分支、字段语义、类/方法职责 | `local_logic`：reference 导航 + `source_inspect.py` 验证，禁止 CLS |
 | 数据统计 | 统计、汇总、占比、成功率、总数、计数、健康检查、有多少、多少笔 | 先用 API 探测；<=500 精确，500-1000 按意图选择，>1000 默认采样 |
 | 流程追踪 | 借款、下单、Hold单、HOLD_ON、进H、解H、放款、还款、债转、权益、签约、绑卡、指定 `traceId`/`orderId`/`contractNo` | 路由到业务模块 reference，按模块首查主键和入口日志追踪全链路 |
+| 联合分析 | 同时要求梳理逻辑与验证线上/测试实际路径，或日志证据不足自动升级 | `combined`：先源码、后日志，合并证据发卡 |
 | 健康检查 | 最近有没有异常、无具体标识符 | 使用业务模块 reference 的总览式查询步骤 |
 | SSO/登录 | 浏览器 fallback 跳转 Argus/JANUS/PMP 登录 | 使用 `xh-sso-access` |
 
@@ -221,7 +295,7 @@ python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py \
 
 用户问表中`别名`对应的整体日志、异常、健康情况时，不需要追问具体 `serviceName`；按同别名的全部 `serviceName` 查询。用户明确写出具体 `serviceName` 时，才只查该单个服务。
 
-业务意图优先级固定为：标识符查询 → 业务链路查询 → 服务健康查询 → 服务别名范围查询。用户提供 `traceId/orderId/cid/contractNo` 等标识符时优先按标识符查；用户描述"借款首页、借款内容、借款试算、预检、借款能力校验、首页不展示借款额度、客户申请借款、申请前轨迹"时，按申请前链路查询处理；用户只说"借款失败"且未明确订单、下单或反欺诈时，也默认按申请前链路查询处理；用户描述"Hold单、H单、HOLD_ON、进入 H 单、进H、解H、继续hold、解H推送、取消Hold、Hold超时、超时转单、CRM催促解H"时，按 Hold 生命周期处理，优先级高于通用订单、放款、权益关键词；例如"拒就赔解H"走 Hold 模块，单独的"拒就赔"仍走原权益/放款路由。用户描述"债转、债权转让、合同债转、期供代偿、债转回购"时，按账务债转成功通知后的 `order-batch → order` 链路处理，优先级高于通用还款、扣款关键词。用户描述"下单、借款下单、下单成功、下单失败、订单失败、下单异常、下单链路异常、拦截"时，按正式下单链路查询处理并优先使用模块锚点。只有用户明确说"订单服务异常"、"订单组异常"、"客户订单组健康检查"、"`order-batch`"、"`order-batch-timing`"、"`mqResendJob`"、"服务健康"等服务侧语义时，才按服务健康或服务组范围处理。
+业务意图优先级固定为：标识符查询 → 业务链路查询 → 服务健康查询 → 服务别名范围查询。用户提供 `traceId/orderId/cid/contractNo` 等标识符时优先按标识符查；用户描述"借款首页、借款内容、借款试算、预检、借款能力校验、首页不展示借款额度、客户申请借款、申请前轨迹"时，按申请前链路查询处理；用户只说"借款失败"且未明确订单、下单或反欺诈时，也默认按申请前链路查询处理；用户描述"Hold单、H单、HOLD_ON、进入 H 单、进H、解H、继续hold、解H推送、取消Hold、Hold超时、超时转单、CRM催促解H"时，按 Hold 生命周期处理，**Hold 明确优先于通用订单、放款**；例如"拒就赔解H"走 Hold 模块，单独的"拒就赔"走权益模块。用户描述"债转、债权转让、合同债转、期供代偿、债转回购"时，按账务债转成功通知后的 `order-batch → order` 链路处理，优先级高于通用还款、扣款关键词。用户描述"下单、借款下单、下单成功、下单失败、订单失败、下单异常、下单链路异常、拦截"时，按正式下单链路查询处理并优先使用模块锚点。只有用户明确说"订单服务异常"、"订单组异常"、"客户订单组健康检查"、"`order-batch`"、"`order-batch-timing`"、"`mqResendJob`"、"服务健康"等服务侧语义时，才按服务健康或服务组范围处理。
 
 业务链路查询的结论必须围绕用户目标输出。通用服务 ERROR/WARN 可以作为背景风险提示，但必须单独标注为"服务背景异常"或"订单组服务异常"，不得汇总成业务链路异常。
 
@@ -232,20 +306,52 @@ python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py \
 | Hold单、H单、HOLD_ON、进入 H 单、进H、解H、继续hold、解H推送、取消Hold、Hold超时、超时转单、CRM催促解H、拒就赔解H | `references/modules/hold.md` | Hold 单模块 |
 | 下单、端内（自营）下单、api下单、订单、拦截、反欺诈 | `references/modules/order.md` | 下单模块 |
 | 权益、会员、VIP、优惠券、乐活卡、coupon、尊享卡、拒就赔、加速卡、获额卡、返现券 | `references/modules/benefit.md` | 权益模块 |
-| 放款、资金路由、route、loki放款、拒就赔、提前结清、特项额度 | `references/modules/loan.md` | 放款模块 |
+| 放款、放款日志、放款失败、资金路由、route、loki放款、换资方、缓冲池、再分发、缓冲池出池、特项额度 | `references/modules/loan.md` | 放款模块 |
 | 债转、债权转让、合同债转、债转成功通知、期供代偿、债转回购 | `references/modules/debt.md` | 债转模块 |
-| 还款、扣款、逾期、代扣、结清、repay、好友代付、聚合支付 | `references/modules/repay.md` | 还款模块 |
+| 还款、扣款、逾期、代扣、结清、提前结清、repay、好友代付、聚合支付 | `references/modules/repay.md` | 还款模块 |
 
 匹配不到业务模块时，先问用户确认。
 
 ## 标准工作流
 
-1. 提取环境、时间范围、标识符和业务意图；按"标识符 → 业务链路 → 服务健康 → 服务别名范围"确认查询目标，再路由到业务模块 reference 或服务组范围。业务链路查询优先于服务别名扩范围。
-2. 按"SQL 条件下沉强制约束"先组装完整 CLS 查询；条件不明确时按"模块 reference 锚点 → 本地代码日志 → 保守兜底查询"顺序收窄，禁止宽查后筛。
-3. **判断是否为统计模式（见"数据统计强制约束"）。是 → `cls_query.py --method auto --api-limit 500` 先探测；按 `log_count/is_complete/has_more` 决定精确统计或采样统计。**
+### 纯源码 `local_logic`
+
+1. 识别业务模块并读取对应 module reference，只提取待验证的类、方法、字段和业务节点。
+2. 用 `source_inspect.py --status` 记录仓库上下文；用 `--search` 和 `--file` 回源码确认完整调用链、判断条件和外部依赖。
+3. 对照 reference 与当前源码；有冲突时以当前源码为准，并在未确认项中说明 reference 可能过期。
+4. 组装业务逻辑卡片，执行「来源识别与飞书卡片发送」，使用 `--content-mode business-logic`。本流程任何步骤都不得调用 CLS。
+
+### 日志 `log_diagnosis`
+
+1. 提取环境、时间范围、标识符和业务意图；按“标识符 → 业务链路 → 服务健康 → 服务别名范围”确认查询目标，再路由到业务模块 reference 或服务组范围。
+2. 按“SQL 条件下沉强制约束”先组装完整 CLS 查询；条件不明确时按“模块 reference 锚点 → 本地代码日志 → 保守兜底查询”顺序收窄，禁止宽查后筛。
+3. 判断是否为统计模式。是 → `cls_query.py --method auto --api-limit 500` 先探测；按 `log_count/is_complete/has_more` 决定精确统计或采样统计。
 4. 非统计模式默认 `cls_query.py --method auto`。API 不可用或结果不完整时，用返回的 `cls_url` 交给 WorkBuddy 内置浏览器；必要时再显式切换本地 Chrome 备用路径。
-5. 0 命中时按"无结果排查清单"回退。
-6. 分析日志 → 执行「来源识别与飞书卡片发送」。**结论只能通过飞书卡片交付**：发卡成功（`status:"sent"`+`message_id`）后当前会话静默或只输出 `已发送飞书卡片。`；只有脚本返回非 0/失败时才 fallback 为当前会话纯文本，且必须说明失败原因。禁止跳过脚本直接发文本——无论结论多简单。仅使用本地 Chrome 备用窗口时，最后调用 `cls_query.py --close` 关窗口。
+5. 0 命中时按“无结果排查清单”回退；命中但无法支持确定结论时，自动升级 `combined`。
+6. 日志证据充分时用 `--content-mode log` 发卡。仅使用本地 Chrome 备用窗口时，最后调用 `cls_query.py --close` 关窗口。
+
+### 联合 `combined`
+
+1. 按 `local_logic` 步骤读取源码，得到预期入口、调用顺序、条件分支、关键字段和日志锚点。
+2. 按 `log_diagnosis` 规则查询实际日志，用日志验证请求实际经过、跳过或失败的节点。
+3. 结论分为“源码预期”“日志证据”“联合判断”“阻塞/未确认项”，禁止把源码可能路径写成日志已证实事实。
+4. 使用 `--content-mode combined` 发卡；发送规则和失败降级与其他模式一致。
+
+无论哪种模式，**结论只能通过飞书卡片正常交付**：发卡成功后当前会话静默或只输出 `已发送飞书卡片。`；只有脚本返回非 0/失败时才 fallback 为当前会话纯文本。
+
+## 本地源码工具
+
+`source_inspect.py` 只允许读取映射表中的仓库，不执行 fetch、pull、checkout、stash 或文件写入。完整参数以 `--help` 为准。
+
+```bash
+python3 ${WORKBUDDY_SKILL_DIR}/scripts/source_inspect.py --project order --status
+python3 ${WORKBUDDY_SKILL_DIR}/scripts/source_inspect.py --project order --search "LoanServiceImpl" --context 3 --max-results 50
+python3 ${WORKBUDDY_SKILL_DIR}/scripts/source_inspect.py --project order --file "path/to/File.java" --start-line 120 --end-line 260
+```
+
+- `--status`：返回仓库路径、当前分支、HEAD commit、dirty 状态和变更文件。
+- `--search`：按字面量搜索源码/配置文件，默认 50 条，最多 200 条；使用上下文继续判断目标文件。
+- `--file`：只读取仓库内源码/配置白名单文件的指定行，单次最多 400 行；拒绝绝对路径、`../` 越界、隐藏/构建目录和仓库外符号链接。
 
 ## CLS 工具
 
@@ -315,10 +421,10 @@ URL: `https://datasight-1300455117.internal.clsconsole.tencent-cloud.com/cls/sea
 - Hold单/H单/HOLD_ON/进入 H 单/解H/继续Hold/取消/超时/重路由问题：读 `references/modules/hold.md`
 - 签约/重签/协议/绑卡问题：读 `references/modules/sign.md`
 - 权益/VIP/优惠券/乐活卡问题：读 `references/modules/benefit.md`
-- 放款/资金路由/loki/提前结清问题：读 `references/modules/loan.md`
+- 放款/资金路由/loki/缓冲池再分发问题：读 `references/modules/loan.md`
 - 债转/债权转让/合同债转/期供代偿/债转回购问题：读 `references/modules/debt.md`
-- 还款/扣款/结清/逾期问题：读 `references/modules/repay.md`
-- `references/common/update-target-branch.md`：代码锚点校验前更新本地分支（生产读 `master`，测试先问用户要需求开发分支）
+- 还款/扣款/结清/提前结清/逾期问题：读 `references/modules/repay.md`
+- `references/common/update-target-branch.md`：只复用生产/测试目标分支选择和结论标注；本技能不执行其中的仓库更新步骤
 - `references/common/cls-local-chrome-access.md`：备用：本地 Chrome 专用窗口访问 CLS
 - `references/common/cls-dom-extraction.md`：全文提取、加载更多、CK/CS 合同号解析
 - `references/common/cls-query-pitfalls.md`：CLS 高频坑和恢复方式

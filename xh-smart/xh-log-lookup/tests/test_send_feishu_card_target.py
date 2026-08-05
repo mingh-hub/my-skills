@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 import importlib.util
+import inspect
 import json
 import os
+import shlex
 import subprocess
 import tempfile
 import unittest
@@ -46,12 +48,25 @@ class LarkRunTest(unittest.TestCase):
 
 
 class ResolveSendTargetTest(unittest.TestCase):
-    def _args(self, chat=None, resolve_chat=False, source_query="raw question"):
+    def _args(
+        self,
+        chat=None,
+        resolve_chat=False,
+        source_query="raw question",
+        user_id=None,
+        chat_id=None,
+        chat_type=None,
+        sender_open_id=None,
+    ):
         return SimpleNamespace(
             chat=chat,
             resolve_chat=resolve_chat,
             source_query=source_query,
             resolve_window_minutes=15,
+            user_id=user_id,
+            chat_id=chat_id,
+            chat_type=chat_type,
+            sender_open_id=sender_open_id,
         )
 
     def _select(
@@ -90,6 +105,73 @@ class ResolveSendTargetTest(unittest.TestCase):
             resolver,
             env_chat_id="oc_env",
             default_private_chat_id="oc_private",
+        )
+
+        self.assertEqual(chat_id, "oc_manual")
+        self.assertEqual(chat_source, "--chat")
+        self.assertEqual(sender_info, {})
+        self.assertEqual(send_meta, {})
+        self.assertIsNone(error)
+
+    def test_user_id_has_highest_priority(self):
+        def resolver(query, window_minutes, audit=None):
+            raise AssertionError("resolver should not be called")
+
+        chat_id, chat_source, sender_info, send_meta, error = self._select(
+            self._args(
+                chat="oc_manual",
+                resolve_chat=True,
+                user_id="ou_direct",
+                chat_id="oc_direct",
+                chat_type="p2p",
+            ),
+            resolver,
+            env_chat_id="oc_env",
+        )
+
+        self.assertIsNone(chat_id)
+        self.assertEqual(chat_source, "--user-id")
+        self.assertEqual(sender_info["target_type"], "user")
+        self.assertEqual(sender_info["user_id"], "ou_direct")
+        self.assertEqual(sender_info["chat_type"], "p2p")
+        self.assertEqual(send_meta, {})
+        self.assertIsNone(error)
+
+    def test_chat_id_wins_over_legacy_chat_and_resolver(self):
+        def resolver(query, window_minutes, audit=None):
+            raise AssertionError("resolver should not be called")
+
+        chat_id, chat_source, sender_info, send_meta, error = self._select(
+            self._args(
+                chat="oc_manual",
+                resolve_chat=True,
+                chat_id="oc_direct",
+                chat_type="group",
+                sender_open_id="ou_sender",
+            ),
+            resolver,
+            env_chat_id="oc_env",
+        )
+
+        self.assertEqual(chat_id, "oc_direct")
+        self.assertEqual(chat_source, "--chat-id")
+        self.assertEqual(sender_info["target_type"], "chat")
+        self.assertEqual(sender_info["sender_open_id"], "ou_sender")
+        self.assertEqual(sender_info["chat_type"], "group")
+        self.assertEqual(send_meta, {})
+        self.assertIsNone(error)
+
+    def test_legacy_argument_namespace_remains_supported(self):
+        args = SimpleNamespace(
+            chat="oc_manual",
+            resolve_chat=False,
+            source_query="raw question",
+            resolve_window_minutes=15,
+        )
+
+        chat_id, chat_source, sender_info, send_meta, error = self._select(
+            args,
+            lambda *_args, **_kwargs: None,
         )
 
         self.assertEqual(chat_id, "oc_manual")
@@ -307,6 +389,169 @@ class ResolveSendTargetTest(unittest.TestCase):
         self.assertEqual(error["status"], "unresolved")
         self.assertEqual(error["error"], "missing_private_target")
         self.assertEqual(error["source_error"], "no_match")
+
+
+class DirectSendTest(unittest.TestCase):
+    def test_send_card_uses_user_id_for_direct_private_message(self):
+        self.assertIn(
+            "target_type",
+            inspect.signature(send_feishu_card.send_card).parameters,
+            "send_card does not support direct user targets",
+        )
+        seen = {}
+
+        def fake_lark_run(cmd):
+            seen["cmd"] = cmd
+            return SimpleNamespace(
+                stdout='{"ok": true, "data": {"message_id": "om_sent"}}',
+                stderr="",
+            )
+
+        with mock.patch.object(send_feishu_card, "_lark_run", side_effect=fake_lark_run):
+            send_feishu_card.send_card(
+                None,
+                {"header": {}, "body": {"elements": []}},
+                "--user-id",
+                quiet_success=True,
+                target_type="user",
+                user_id="ou_direct",
+            )
+
+        self.assertIn("messages-send --user-id 'ou_direct'", seen["cmd"])
+        self.assertNotIn("--chat-id", seen["cmd"])
+
+    def test_send_card_shell_quotes_direct_user_id(self):
+        seen = {}
+        malicious_user_id = "ou_bad'; touch /tmp/xh-log-lookup-injected; '"
+
+        def fake_lark_run(cmd):
+            seen["cmd"] = cmd
+            return SimpleNamespace(
+                stdout='{"ok": true, "data": {"message_id": "om_sent"}}',
+                stderr="",
+            )
+
+        with mock.patch.object(send_feishu_card, "_lark_run", side_effect=fake_lark_run):
+            send_feishu_card.send_card(
+                None,
+                {"header": {}, "body": {"elements": []}},
+                "--user-id",
+                quiet_success=True,
+                target_type="user",
+                user_id=malicious_user_id,
+            )
+
+        self.assertIn(
+            f"--user-id {shlex.quote(malicious_user_id)}",
+            seen["cmd"],
+        )
+
+    def test_send_card_shell_quotes_direct_chat_id(self):
+        seen = {}
+        malicious_chat_id = "oc_bad'; touch /tmp/xh-log-lookup-injected; '"
+
+        def fake_lark_run(cmd):
+            seen["cmd"] = cmd
+            return SimpleNamespace(
+                stdout='{"ok": true, "data": {"message_id": "om_sent"}}',
+                stderr="",
+            )
+
+        with mock.patch.object(send_feishu_card, "_lark_run", side_effect=fake_lark_run):
+            send_feishu_card.send_card(
+                malicious_chat_id,
+                {"header": {}, "body": {"elements": []}},
+                "--chat-id",
+                quiet_success=True,
+            )
+
+        self.assertIn(
+            f"--chat-id {shlex.quote(malicious_chat_id)}",
+            seen["cmd"],
+        )
+
+    def test_to_open_id_reads_nested_user_payload(self):
+        self.assertTrue(
+            hasattr(send_feishu_card, "_to_open_id"),
+            "_to_open_id has not been added",
+        )
+        response = SimpleNamespace(
+            stdout='{"ok": true, "data": {"user": {"open_id": "ou_converted"}}}',
+            stderr="",
+        )
+
+        with mock.patch.object(send_feishu_card, "_lark_run", return_value=response):
+            result = send_feishu_card._to_open_id("minghai", uid_type="user_id")
+
+        self.assertEqual(result, "ou_converted")
+
+    def test_to_open_id_returns_none_when_conversion_fails(self):
+        self.assertTrue(
+            hasattr(send_feishu_card, "_to_open_id"),
+            "_to_open_id has not been added",
+        )
+        response = SimpleNamespace(
+            stdout='{"ok": false, "error": "not_found"}',
+            stderr="",
+        )
+
+        with mock.patch.object(send_feishu_card, "_lark_run", return_value=response):
+            result = send_feishu_card._to_open_id("missing", uid_type="user_id")
+
+        self.assertIsNone(result)
+
+    def test_to_open_id_shell_quotes_uid(self):
+        malicious_uid = "user'; touch /tmp/xh-log-lookup-injected; '"
+        response = SimpleNamespace(stdout='{"ok": false}', stderr="")
+
+        with mock.patch.object(
+            send_feishu_card,
+            "_lark_run",
+            return_value=response,
+        ) as lark_run:
+            send_feishu_card._to_open_id(malicious_uid, uid_type="user_id")
+
+        command = lark_run.call_args.args[0]
+        self.assertIn(f"--user-id {shlex.quote(malicious_uid)}", command)
+
+    def test_sender_conversion_failure_omits_group_mention(self):
+        captured = {}
+
+        def fake_send_card(chat_id, card, chat_source, **kwargs):
+            captured["chat_id"] = chat_id
+            captured["card"] = card
+
+        argv = [
+            str(SCRIPT_PATH),
+            "--chat-id",
+            "oc_group",
+            "--chat-type",
+            "group",
+            "--sender-open-id",
+            "missing-user",
+            "--at-sender",
+            "--title",
+            "test",
+            "--data",
+            "{}",
+        ]
+        with mock.patch.object(
+            send_feishu_card,
+            "_to_open_id",
+            return_value=None,
+            create=True,
+        ), mock.patch.object(
+            send_feishu_card,
+            "send_card",
+            side_effect=fake_send_card,
+        ), mock.patch("sys.argv", argv):
+            try:
+                send_feishu_card.main()
+            except SystemExit as exc:
+                self.fail(f"direct-send arguments were rejected: {exc}")
+
+        self.assertEqual(captured["chat_id"], "oc_group")
+        self.assertNotIn("<at user_id=", json.dumps(captured["card"]))
 
 
 class SearchMessagesCommandTest(unittest.TestCase):

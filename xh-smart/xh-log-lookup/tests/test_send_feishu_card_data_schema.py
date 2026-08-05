@@ -172,6 +172,67 @@ class ValidateCardDataTest(unittest.TestCase):
         self.assertIn("bar=beta", rendered)
         self.assertNotIn("****", rendered)
 
+    def test_default_log_card_keeps_empty_log_language(self):
+        card = send_feishu_card.build_card(
+            title="日志查询",
+            color="blue",
+            cls_url="",
+            cls_url_expanded="",
+            data={"log_count": 0},
+        )
+        rendered = json.dumps(card, ensure_ascii=False)
+
+        self.assertIn("无匹配日志", rendered)
+        self.assertIn("共查询到 0 条日志", rendered)
+
+    def test_business_logic_card_has_no_empty_log_language(self):
+        card = send_feishu_card.build_card(
+            title="下单业务逻辑",
+            color="blue",
+            cls_url="",
+            cls_url_expanded="",
+            data={
+                "summary_fields": [
+                    {"label": "仓库", "value": "order"},
+                    {"label": "分支", "value": "release-1.0.0"},
+                ],
+                "log_count": 0,
+                "analysis": "下单入口进入 LoanTemplate 后执行前置、核心和后置处理。",
+            },
+            content_mode="business-logic",
+        )
+        rendered = json.dumps(card, ensure_ascii=False)
+
+        self.assertNotIn("无匹配日志", rendered)
+        self.assertNotIn("共查询到 0 条日志", rendered)
+        self.assertIn("🧭 本地业务逻辑分析 |", rendered)
+
+    def test_combined_card_renders_source_and_log_footer(self):
+        card = send_feishu_card.build_card(
+            title="下单联合分析",
+            color="yellow",
+            cls_url="https://example.test/cls",
+            cls_url_expanded="",
+            data={
+                "summary_fields": [{"label": "仓库", "value": "order"}],
+                "log_count": 3,
+                "call_chain": [{"service": "order", "content": "loanOrder"}],
+                "table_data": [
+                    {
+                        "headers": ["步骤", "类或方法", "关键逻辑"],
+                        "rows": [["1", "LoanServiceImpl#loanOrder", "请求入口"]],
+                    }
+                ],
+                "analysis": "源码预期链路与日志实际链路一致。",
+            },
+            content_mode="combined",
+        )
+        rendered = json.dumps(card, ensure_ascii=False)
+
+        self.assertIn("LoanServiceImpl#loanOrder", rendered)
+        self.assertIn("order", rendered)
+        self.assertIn("🧭 源码 + 日志联合分析 · 3 条日志 |", rendered)
+
 
 if __name__ == "__main__":
     unittest.main()
