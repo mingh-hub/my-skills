@@ -31,6 +31,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -45,7 +46,28 @@ CURRENT_SENDER_ENV_KEYS = (
     "AGENT_CURRENT_SENDER_OPEN_ID",
     "FEISHU_SENDER_OPEN_ID",
 )
-LARK_CLI_ABSOLUTE = "/Users/user/.workbuddy/binaries/node/cli-connector-packages/bin/lark-cli"
+LARK_CLI_CANDIDATE_PATHS = (
+    "/Users/user/.workbuddy/binaries/node/cli-connector-packages/bin/lark-cli",
+    os.path.expanduser("~/.workbuddy/binaries/node/cli-connector-packages/bin/lark-cli"),
+)
+
+
+def _resolve_lark_cli():
+    """Resolve lark-cli from known WorkBuddy paths, then PATH."""
+    for candidate in LARK_CLI_CANDIDATE_PATHS:
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    found = shutil.which("lark-cli")
+    if found:
+        return found
+    raise FileNotFoundError(
+        "lark-cli not found: checked "
+        + ", ".join(LARK_CLI_CANDIDATE_PATHS)
+        + " and PATH"
+    )
+
+
+LARK_CLI_ABSOLUTE = _resolve_lark_cli()
 LARK_CLI_BIN_DIR = os.path.dirname(LARK_CLI_ABSOLUTE)
 WORKBUDDY_NODE_BIN_DIR = "/Users/user/.workbuddy/binaries/node/versions/22.22.2/bin"
 EXTRA_CHAT_ENV_KEYS = ("WORKBUDDY_CURRENT_CHAT_ID", "CHAT_ID", "CURRENT_CHAT_ID", "FEISHU_CHAT_ID")
@@ -115,6 +137,38 @@ def _first_env(keys):
         if value:
             return key, value
     return "", ""
+
+
+def _quote_lark_id(value):
+    quoted = shlex.quote(value)
+    return f"'{quoted}'" if quoted == value else quoted
+
+
+def _to_open_id(uid, uid_type="user_id"):
+    """Convert a user_id or union_id to a Feishu open_id."""
+    if not uid:
+        return None
+    uid = str(uid).strip()
+    if uid.startswith("ou_"):
+        return uid
+    if uid_type not in ("user_id", "union_id", "open_id"):
+        uid_type = "user_id"
+    cmd = (
+        f"lark-cli contact +get-user --user-id {_quote_lark_id(uid)} "
+        f"--user-id-type {shlex.quote(uid_type)} --as bot"
+    )
+    try:
+        result = _lark_run(cmd)
+    except Exception:
+        return None
+    try:
+        data = json.loads(result.stdout)
+    except (json.JSONDecodeError, AttributeError):
+        return None
+    if data.get("ok"):
+        user = (data.get("data") or {}).get("user") or {}
+        return user.get("open_id") or None
+    return None
 
 
 def _now_iso():
@@ -1273,6 +1327,32 @@ def resolve_send_target(
     sender_info = {}
     send_meta = {}
 
+    # Hermes direct mode has priority over every legacy resolution path.
+    user_id = getattr(args, "user_id", None)
+    direct_chat_id = getattr(args, "chat_id", None)
+    direct_chat_type = getattr(args, "chat_type", None)
+    direct_sender_open_id = getattr(args, "sender_open_id", None)
+
+    if user_id:
+        sender_info = {
+            "target_type": "user",
+            "user_id": user_id,
+            "chat_type": direct_chat_type or "p2p",
+            "sender_open_id": direct_sender_open_id or user_id,
+            "sender_name": direct_sender_open_id or user_id,
+        }
+        return None, "--user-id", sender_info, send_meta, None
+
+    if direct_chat_id:
+        sender_info = {
+            "target_type": "chat",
+            "chat_id": direct_chat_id,
+            "chat_type": direct_chat_type or "group",
+            "sender_open_id": direct_sender_open_id or "",
+            "sender_name": direct_sender_open_id or "",
+        }
+        return direct_chat_id, "--chat-id", sender_info, send_meta, None
+
     if args.chat:
         return args.chat, "--chat", sender_info, send_meta, None
 
@@ -1515,8 +1595,9 @@ def build_card(title, color, cls_url, cls_url_expanded, data,
     return card
 
 
-def send_card(chat_id, card, chat_source, meta=None, quiet_success=False, audit=None):
-    """通过 lark-cli bot 身份发送飞书卡片"""
+def send_card(chat_id, card, chat_source, meta=None, quiet_success=False, audit=None,
+              target_type="chat", user_id=None):
+    """Send a Feishu card to a chat or directly to a user."""
     card_json = json.dumps(card, ensure_ascii=False)
     meta = meta or {}
 
@@ -1541,7 +1622,10 @@ def send_card(chat_id, card, chat_source, meta=None, quiet_success=False, audit=
     # This avoids the issues with $(cat file) where large content can exceed
     # ARG_MAX or double quotes in JSON break shell parsing.
     escaped = card_json.replace("'", "'\\''")
-    cmd = f"lark-cli im +messages-send --chat-id '{chat_id}' --as bot --msg-type interactive --content '{escaped}'"
+    if target_type == "user" and user_id:
+        cmd = f"lark-cli im +messages-send --user-id {_quote_lark_id(user_id)} --as bot --msg-type interactive --content '{escaped}'"
+    else:
+        cmd = f"lark-cli im +messages-send --chat-id {_quote_lark_id(chat_id)} --as bot --msg-type interactive --content '{escaped}'"
     result = _lark_run(cmd)
 
     try:
@@ -1613,7 +1697,18 @@ def send_card(chat_id, card, chat_source, meta=None, quiet_success=False, audit=
 
 def main():
     parser = argparse.ArgumentParser(description="发送飞书互动卡片")
-    parser.add_argument("--chat", default=None, help="飞书会话 chat_id（手动模式，优先级最高）")
+    parser.add_argument("--chat-id", default=None,
+                        help="显式群/会话 chat_id (oc_xxx)，Hermes 直传，优先级高于 --resolve-chat")
+    parser.add_argument("--user-id", default=None,
+                        help="显式私聊 open_id (ou_xxx)，Hermes 直传私聊直发，优先级最高")
+    parser.add_argument("--sender-open-id", default=None,
+                        help="群聊提问者 open_id (ou_xxx)，卡片 @ 用；非 ou_ 开头自动转换")
+    parser.add_argument("--sender-id-type", default="user_id",
+                        choices=["user_id", "union_id", "open_id"],
+                        help="--sender-open-id 的类型，非 ou_ 开头时用于转换（默认 user_id）")
+    parser.add_argument("--chat-type", default=None, choices=["p2p", "group"],
+                        help="显式会话类型（Hermes 直传时用，默认 user 模式=p2p，chat 模式=group）")
+    parser.add_argument("--chat", default=None, help="飞书会话 chat_id（手动模式，兼容旧调用）")
     parser.add_argument("--resolve-chat", action="store_true",
                         help="兜底：自动用 --source-query 搜索群聊 @Bot 或私聊 p2p 消息获取 chat_id")
     parser.add_argument("--source-query", default="",
@@ -1686,6 +1781,13 @@ def main():
         print(json.dumps(target_error, ensure_ascii=False), file=stream)
         sys.exit(1 if target_error.get("status") == "error" else 2)
 
+    if args.sender_open_id and sender_info.get("target_type") in ("user", "chat"):
+        raw_sender = args.sender_open_id
+        if not raw_sender.startswith("ou_"):
+            raw_sender = _to_open_id(raw_sender, uid_type=args.sender_id_type) or ""
+        sender_info["sender_open_id"] = raw_sender
+        sender_info["sender_name"] = raw_sender
+
     data = json.loads(args.data)
 
     if args.raw_text and "call_chain" not in data:
@@ -1726,6 +1828,8 @@ def main():
         meta=send_meta,
         quiet_success=args.quiet_success,
         audit=audit,
+        target_type=sender_info.get("target_type", "chat") if sender_info else "chat",
+        user_id=sender_info.get("user_id") if sender_info else None,
     )
 
 

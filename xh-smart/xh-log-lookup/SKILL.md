@@ -7,6 +7,7 @@ allowed-tools:
   - Bash(python3 ${WORKBUDDY_SKILL_DIR}/scripts/resolve_workspace.py *)
   - Bash(python3 ${WORKBUDDY_SKILL_DIR}/scripts/source_inspect.py *)
   - Bash(python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py *)
+  - Bash(python3 ${WORKBUDDY_SKILL_DIR}/scripts/resolve_hermes_session.py *)
   - Bash(LARK_CLI_NO_PROXY=1 lark-cli im +messages-search *)
   - Bash(LARK_CLI_NO_PROXY=1 lark-cli im +messages-mget *)
   - Bash(LARK_CLI_NO_PROXY=1 lark-cli im +messages-send *)
@@ -220,11 +221,39 @@ SQL 构造顺序：
 技能被触发后，在输出最终结论前执行以下流程：
 
 1. **必须先调用发送脚本**：最终结论生成后，先执行 `send_feishu_card.py --quiet-success`。不要先输出普通文本结论；只有发送脚本返回非 0 或明确失败状态时，才输出纯文本 fallback。
-2. **来源优先级**：`--chat`（人工显式指定）> `--resolve-chat --source-query "{用户原始问题}"` 反查选定的 `chat_id` > `FEISHU_CURRENT_CHAT_ID` / `AGENT_CURRENT_CHAT_ID`（host 若注入的当前会话）> 纯文本 fallback。反查成功时环境变量不能覆盖或短路结果。`WORKBUDDY_HOME_CHANNEL_CHAT_ID` **不再自动兜底**——他人私聊反查不到时若堆到这里会全部误发运维者 DM，仅在显式传 `--allow-home-channel-fallback`（供无来源上下文的批量/定时调用）时才用。WorkBuddy 正常路径必须用 `--resolve-chat`。
+2. **来源优先级**：Hermes 直传（`resolve_hermes_session.py` → `--user-id`/`--chat-id`）> `--chat`（人工显式指定）> `--resolve-chat --source-query "{用户原始问题}"` 反查选定的 `chat_id` > `FEISHU_CURRENT_CHAT_ID` / `AGENT_CURRENT_CHAT_ID`（host 若注入的当前会话）> 纯文本 fallback。反查成功时环境变量不能覆盖或短路结果。`WORKBUDDY_HOME_CHANNEL_CHAT_ID` **不再自动兜底**——他人私聊反查不到时若堆到这里会全部误发运维者 DM，仅在显式传 `--allow-home-channel-fallback`（供无来源上下文的批量/定时调用）时才用。WorkBuddy 正常路径必须用 `--resolve-chat`。
 3. **`--source-query` 取值约束**：必须是触发技能的原始用户消息原文；禁止传分析摘要、关键切片、卡片标题或改写后的问题。
 4. **来源安全**：群聊只能选 @Tom 的消息作为发送目标；未 @Tom 的同文本群消息只能作为噪声过滤。退化搜索（`@Tom` 候选池 + 相似度选择）仍必须通过群聊 @Tom 校验，不能绕过该规则。
 
-发送命令（保留 `--resolve-chat`、`--source-query`、`--debug-log-dir`、`--quiet-success`，按模式选择 `--content-mode`）：
+发送命令按运行环境二选一；均保留 `--debug-log-dir`、`--quiet-success`，并按模式选择 `--content-mode`。
+
+**Hermes 环境**：先执行 helper 并读取 JSON；退出码 2、私聊 `open_id` 为空或输出无法解析时，改走下方反查模板。
+
+```bash
+python3 ${WORKBUDDY_SKILL_DIR}/scripts/resolve_hermes_session.py --resolve-open-id
+```
+
+- `chat_type=dm`：把 `open_id` 传给 `--user-id`，并固定 `--chat-type p2p`，私聊不加 `--at-sender`。
+- `chat_type=group`：把 `chat_id` 传给 `--chat-id`，并固定 `--chat-type group`。提问者 ID 优先使用 `ou_` 开头的 `sender_open_id_raw`；否则使用 `user_id` 并传 `--sender-id-type user_id`。转换失败时仅发群，不生成 @。
+
+```bash
+# 私聊直发
+python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py \
+  --user-id "ou_xxx" --chat-type p2p \
+  --debug-log-dir "/private/tmp/xh-log-lookup-route" \
+  --quiet-success --content-mode "{log|business-logic|combined}" \
+  --title "..." --color "..." --data "..."
+
+# 群聊直发并 @ 提问者
+python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py \
+  --chat-id "oc_xxx" --chat-type group \
+  --sender-open-id "{ou_xxx|租户 user_id}" --sender-id-type user_id \
+  --debug-log-dir "/private/tmp/xh-log-lookup-route" \
+  --at-sender --quiet-success --content-mode "{log|business-logic|combined}" \
+  --title "..." --color "..." --data "..."
+```
+
+**WorkBuddy、非 Hermes 或 Hermes helper 降级**：使用消息原文反查。
 
 ```bash
 python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py \
