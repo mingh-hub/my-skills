@@ -27,6 +27,7 @@
 
 import argparse
 import difflib
+import importlib
 import json
 import os
 import re
@@ -36,6 +37,95 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timedelta, timezone
+
+
+HERMES_ENV_PATH = os.path.expanduser("~/.hermes/.env")
+HERMES_PYTHON_CANDIDATES = (
+    os.path.expanduser("~/.hermes/hermes-agent/venv/bin/python"),
+    os.path.expanduser("~/.hermes/hermes-agent/venv/bin/python3"),
+)
+_LARK_OAPI_MODULE = None
+_LARK_OAPI_IMPORT_FAILED = False
+_LARK_OAPI_CLIENT = None
+_LARK_OAPI_CLIENT_FAILED = False
+
+
+def _import_lark_oapi():
+    """Import the optional Feishu SDK once, without import-time side effects."""
+    global _LARK_OAPI_MODULE, _LARK_OAPI_IMPORT_FAILED
+    if _LARK_OAPI_MODULE is not None:
+        return _LARK_OAPI_MODULE
+    if _LARK_OAPI_IMPORT_FAILED:
+        return None
+    try:
+        _LARK_OAPI_MODULE = importlib.import_module("lark_oapi")
+    except Exception:
+        _LARK_OAPI_IMPORT_FAILED = True
+        return None
+    return _LARK_OAPI_MODULE
+
+
+def _maybe_relaunch_with_hermes_python():
+    """Relaunch the CLI under Hermes Python when only that runtime has the SDK."""
+    if _import_lark_oapi() is not None:
+        return
+    current_python = os.path.realpath(sys.executable)
+    for candidate in HERMES_PYTHON_CANDIDATES:
+        if (
+            os.path.isfile(candidate)
+            and os.access(candidate, os.X_OK)
+            and os.path.realpath(candidate) != current_python
+        ):
+            os.execv(candidate, [candidate] + sys.argv)
+
+
+def _load_env_credentials():
+    """Load Feishu credentials from the process environment, then Hermes .env."""
+    app_id = os.environ.get("FEISHU_APP_ID", "")
+    app_secret = os.environ.get("FEISHU_APP_SECRET", "")
+    if app_id and app_secret:
+        return app_id, app_secret
+    try:
+        with open(HERMES_ENV_PATH, encoding="utf-8") as env_file:
+            for raw_line in env_file:
+                line = raw_line.strip()
+                if line.startswith("FEISHU_APP_ID=") and not app_id:
+                    app_id = line.split("=", 1)[1].strip()
+                elif line.startswith("FEISHU_APP_SECRET=") and not app_secret:
+                    app_secret = line.split("=", 1)[1].strip()
+    except OSError:
+        pass
+    return app_id, app_secret
+
+
+def _lark_oapi_client():
+    """Build and cache the optional bot client; return None for CLI fallback."""
+    global _LARK_OAPI_CLIENT, _LARK_OAPI_CLIENT_FAILED
+    if _LARK_OAPI_CLIENT is not None:
+        return _LARK_OAPI_CLIENT
+    if _LARK_OAPI_CLIENT_FAILED:
+        return None
+
+    sdk = _import_lark_oapi()
+    if sdk is None:
+        _LARK_OAPI_CLIENT_FAILED = True
+        return None
+    app_id, app_secret = _load_env_credentials()
+    if not app_id or not app_secret:
+        _LARK_OAPI_CLIENT_FAILED = True
+        return None
+    try:
+        _LARK_OAPI_CLIENT = (
+            sdk.Client.builder()
+            .app_id(app_id)
+            .app_secret(app_secret)
+            .log_level(sdk.LogLevel.ERROR)
+            .build()
+        )
+    except Exception:
+        _LARK_OAPI_CLIENT_FAILED = True
+        return None
+    return _LARK_OAPI_CLIENT
 
 # Bot identity 常量（全局唯一，跨所有群不变）
 BOT_OPEN_ID = "ou_ae0341a3578d833a22b5f2927b103988"
@@ -144,6 +234,23 @@ def _quote_lark_id(value):
     return f"'{quoted}'" if quoted == value else quoted
 
 
+def _oapi_get_user_request(uid, uid_type):
+    from lark_oapi.api.contact.v3 import GetUserRequest
+
+    return (
+        GetUserRequest.builder()
+        .user_id(uid)
+        .user_id_type(uid_type)
+        .build()
+    )
+
+
+def _oapi_get_message_request(message_id):
+    from lark_oapi.api.im.v1 import GetMessageRequest
+
+    return GetMessageRequest.builder().message_id(message_id).build()
+
+
 def _to_open_id(uid, uid_type="user_id"):
     """Convert a user_id or union_id to a Feishu open_id."""
     if not uid:
@@ -153,6 +260,21 @@ def _to_open_id(uid, uid_type="user_id"):
         return uid
     if uid_type not in ("user_id", "union_id", "open_id"):
         uid_type = "user_id"
+
+    client = _lark_oapi_client()
+    if client is not None:
+        try:
+            response = client.contact.v3.user.get(
+                _oapi_get_user_request(uid, uid_type)
+            )
+            if response.success():
+                user = getattr(response.data, "user", None)
+                open_id = getattr(user, "open_id", None)
+                if open_id:
+                    return open_id
+        except Exception:
+            pass
+
     cmd = (
         f"lark-cli contact +get-user --user-id {_quote_lark_id(uid)} "
         f"--user-id-type {shlex.quote(uid_type)} --as bot"
@@ -714,7 +836,81 @@ def _candidates_from_search_payload(search_payload, source):
 
 
 def _fetch_message_detail(msg_id, audit=None, source=""):
-    cmd = f"lark-cli im +messages-mget --message-ids '{msg_id}' --as bot"
+    client = _lark_oapi_client()
+    if client is not None:
+        try:
+            response = client.im.v1.message.get(
+                _oapi_get_message_request(msg_id)
+            )
+            if response.success():
+                items = getattr(response.data, "items", None) or []
+                if items:
+                    item = items[0]
+                    sender = getattr(item, "sender", None)
+                    body = getattr(item, "body", None)
+                    chat_type = (
+                        getattr(item, "chat_type", "")
+                        or getattr(item, "chat_type_v2", "")
+                        or ""
+                    )
+                    raw_mentions = getattr(item, "mentions", None)
+                    mentions = []
+                    for mention in raw_mentions or []:
+                        mentions.append({
+                            "key": getattr(mention, "key", "") or "",
+                            "id": getattr(mention, "id", "") or "",
+                            "id_type": getattr(mention, "id_type", "") or "",
+                            "name": getattr(mention, "name", "") or "",
+                            "tenant_key": getattr(mention, "tenant_key", "") or "",
+                        })
+                    body_content = (
+                        getattr(body, "content", "") if body else ""
+                    ) or ""
+                    message = {
+                        "message_id": getattr(item, "message_id", None) or msg_id,
+                        "chat_id": getattr(item, "chat_id", "") or "",
+                        "chat_type": chat_type,
+                        "create_time": getattr(item, "create_time", "") or "",
+                        "update_time": getattr(item, "update_time", "") or "",
+                        "timestamp": getattr(item, "create_time", "") or "",
+                        "sender": {
+                            "id": getattr(sender, "id", "") if sender else "",
+                            "name": (
+                                getattr(sender, "sender_name", "") if sender else ""
+                            ) or "",
+                        },
+                        "body": {
+                            "content": body_content,
+                        },
+                        "mentions": mentions,
+                    }
+                    detail_complete = (
+                        not _message_needs_detail(message)
+                        and bool(body_content)
+                        and (chat_type != "group" or raw_mentions is not None)
+                    )
+                    if detail_complete and audit:
+                        audit.add_mget({
+                            "source": source,
+                            "message_id": msg_id,
+                            "ok": True,
+                            "chat_id": message["chat_id"],
+                            "chat_type": message["chat_type"],
+                            "sender_id": message["sender"]["id"],
+                            "create_time": message["create_time"],
+                            "update_time": message["update_time"],
+                            "timestamp": message["timestamp"],
+                            "transport": "lark_oapi",
+                        })
+                    if detail_complete:
+                        return message, ""
+        except Exception:
+            pass
+
+    cmd = (
+        "lark-cli im +messages-mget "
+        f"--message-ids {_quote_lark_id(str(msg_id))} --as bot"
+    )
     detail_result = _lark_run(cmd)
 
     detail_data = _load_json_output(detail_result.stdout, detail_result.stderr, "resolve_chat.mget")
@@ -1595,6 +1791,51 @@ def build_card(title, color, cls_url, cls_url_expanded, data,
     return card
 
 
+def _oapi_create_message_request(card, receive_id, receive_id_type):
+    from lark_oapi.api.im.v1 import (
+        CreateMessageRequest,
+        CreateMessageRequestBody,
+    )
+
+    body = CreateMessageRequestBody()
+    body.receive_id = receive_id
+    body.msg_type = "interactive"
+    body.content = json.dumps(card, ensure_ascii=False)
+    return (
+        CreateMessageRequest.builder()
+        .receive_id_type(receive_id_type)
+        .request_body(body)
+        .build()
+    )
+
+
+def _send_card_via_oapi(card, target_type, chat_id, user_id):
+    """Send through the optional SDK and return (success, message_id/error)."""
+    client = _lark_oapi_client()
+    if client is None:
+        return False, "lark_oapi unavailable"
+
+    is_user_target = target_type == "user" and bool(user_id)
+    receive_id = user_id if is_user_target else chat_id
+    receive_id_type = "open_id" if is_user_target else "chat_id"
+    try:
+        request = _oapi_create_message_request(
+            card, receive_id, receive_id_type
+        )
+        response = client.im.v1.message.create(request)
+        if response.success():
+            message_id = getattr(response.data, "message_id", None)
+            if not message_id:
+                return False, "missing message_id"
+            return True, message_id
+        return False, (
+            f"code={getattr(response, 'code', 'unknown')} "
+            f"msg={getattr(response, 'msg', 'unknown')}"
+        )
+    except Exception as exc:
+        return False, str(exc)
+
+
 def send_card(chat_id, card, chat_source, meta=None, quiet_success=False, audit=None,
               target_type="chat", user_id=None):
     """Send a Feishu card to a chat or directly to a user."""
@@ -1616,6 +1857,37 @@ def send_card(chat_id, card, chat_source, meta=None, quiet_success=False, audit=
         if len(card_json) > MAX_CARD_SIZE:
             card_json = card_json[:MAX_CARD_SIZE - 30] + '...\n\n_内容过长已截断_"}}'
         sys.stderr.write(f"[send_card] 卡片已截断: {original_size} -> {len(card_json)} bytes\n")
+
+    oapi_ok, oapi_result = _send_card_via_oapi(
+        card, target_type, chat_id, user_id
+    )
+    if oapi_ok:
+        if audit:
+            audit.set_send(
+                status="sent",
+                message_id=oapi_result,
+                chat_id=chat_id,
+                chat_source=chat_source,
+                transport="lark_oapi",
+            )
+            path = audit.flush()
+        else:
+            path = ""
+        if quiet_success:
+            return
+        output = {
+            "status": "sent",
+            "message_id": oapi_result,
+            "chat_id": chat_id,
+            "chat_source": chat_source,
+            "transport": "lark_oapi",
+        }
+        if meta:
+            output["meta"] = meta
+        if path:
+            output["route_audit_path"] = path
+        print(json.dumps(output, ensure_ascii=False))
+        return
 
     # Use single-quote wrapping for shell safety. Single quotes protect all
     # special characters except single quotes themselves.
@@ -1834,4 +2106,5 @@ def main():
 
 
 if __name__ == "__main__":
+    _maybe_relaunch_with_hermes_python()
     main()

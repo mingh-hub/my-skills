@@ -218,6 +218,8 @@ SQL 构造顺序：
 >
 > **反例（禁止）**：结论分析完成后，认为"问题简单/已查清/直接答复更快"，**不调脚本就把诊断文本发给用户**——即使内容正确，也按交付失败处理。"是否发卡"不由结论复杂度决定，只由本流程决定。
 
+**发送通道（2026-08-05 起双通道）**：`send_feishu_card.py` 的卡片发送、用户 ID 转换和消息详情读取优先使用 `lark_oapi` bot SDK；进程环境中的 `FEISHU_APP_ID` / `FEISHU_APP_SECRET` 优先，缺失时读取 `~/.hermes/.env`。SDK、凭据或请求不可用时自动降级到现有 lark-cli，`--resolve-chat` 使用的 `messages-search` 仍只走 lark-cli。仅 CLI 启动且当前解释器无法导入 SDK 时，脚本才尝试用 Hermes venv Python 重新执行，模块导入不会触发重启。OAPI 发送成功会在普通 stdout 和路由审计中记录 `"transport":"lark_oapi"`；`--quiet-success` 继续抑制成功 stdout，不改变退出码语义。
+
 技能被触发后，在输出最终结论前执行以下流程：
 
 1. **必须先调用发送脚本**：最终结论生成后，先执行 `send_feishu_card.py --quiet-success`。不要先输出普通文本结论；只有发送脚本返回非 0 或明确失败状态时，才输出纯文本 fallback。

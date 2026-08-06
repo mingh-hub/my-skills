@@ -407,7 +407,12 @@ class DirectSendTest(unittest.TestCase):
                 stderr="",
             )
 
-        with mock.patch.object(send_feishu_card, "_lark_run", side_effect=fake_lark_run):
+        with mock.patch.object(
+            send_feishu_card,
+            "_send_card_via_oapi",
+            return_value=(False, "unavailable"),
+            create=True,
+        ), mock.patch.object(send_feishu_card, "_lark_run", side_effect=fake_lark_run):
             send_feishu_card.send_card(
                 None,
                 {"header": {}, "body": {"elements": []}},
@@ -431,7 +436,12 @@ class DirectSendTest(unittest.TestCase):
                 stderr="",
             )
 
-        with mock.patch.object(send_feishu_card, "_lark_run", side_effect=fake_lark_run):
+        with mock.patch.object(
+            send_feishu_card,
+            "_send_card_via_oapi",
+            return_value=(False, "unavailable"),
+            create=True,
+        ), mock.patch.object(send_feishu_card, "_lark_run", side_effect=fake_lark_run):
             send_feishu_card.send_card(
                 None,
                 {"header": {}, "body": {"elements": []}},
@@ -457,7 +467,12 @@ class DirectSendTest(unittest.TestCase):
                 stderr="",
             )
 
-        with mock.patch.object(send_feishu_card, "_lark_run", side_effect=fake_lark_run):
+        with mock.patch.object(
+            send_feishu_card,
+            "_send_card_via_oapi",
+            return_value=(False, "unavailable"),
+            create=True,
+        ), mock.patch.object(send_feishu_card, "_lark_run", side_effect=fake_lark_run):
             send_feishu_card.send_card(
                 malicious_chat_id,
                 {"header": {}, "body": {"elements": []}},
@@ -480,7 +495,9 @@ class DirectSendTest(unittest.TestCase):
             stderr="",
         )
 
-        with mock.patch.object(send_feishu_card, "_lark_run", return_value=response):
+        with mock.patch.object(
+            send_feishu_card, "_lark_oapi_client", return_value=None
+        ), mock.patch.object(send_feishu_card, "_lark_run", return_value=response):
             result = send_feishu_card._to_open_id("minghai", uid_type="user_id")
 
         self.assertEqual(result, "ou_converted")
@@ -495,7 +512,9 @@ class DirectSendTest(unittest.TestCase):
             stderr="",
         )
 
-        with mock.patch.object(send_feishu_card, "_lark_run", return_value=response):
+        with mock.patch.object(
+            send_feishu_card, "_lark_oapi_client", return_value=None
+        ), mock.patch.object(send_feishu_card, "_lark_run", return_value=response):
             result = send_feishu_card._to_open_id("missing", uid_type="user_id")
 
         self.assertIsNone(result)
@@ -505,6 +524,10 @@ class DirectSendTest(unittest.TestCase):
         response = SimpleNamespace(stdout='{"ok": false}', stderr="")
 
         with mock.patch.object(
+            send_feishu_card,
+            "_lark_oapi_client",
+            return_value=None,
+        ), mock.patch.object(
             send_feishu_card,
             "_lark_run",
             return_value=response,
@@ -540,6 +563,9 @@ class DirectSendTest(unittest.TestCase):
             "_to_open_id",
             return_value=None,
             create=True,
+        ), mock.patch.object(
+            send_feishu_card,
+            "load_env",
         ), mock.patch.object(
             send_feishu_card,
             "send_card",
@@ -787,7 +813,10 @@ class ResolveChatMixedSearchTest(unittest.TestCase):
         original_lark_run = send_feishu_card._lark_run
         try:
             send_feishu_card._lark_run = fake_lark_run
-            return func()
+            with mock.patch.object(
+                send_feishu_card, "_lark_oapi_client", return_value=None
+            ):
+                return func()
         finally:
             send_feishu_card._lark_run = original_lark_run
 
