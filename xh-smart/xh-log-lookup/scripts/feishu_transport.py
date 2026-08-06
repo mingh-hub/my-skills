@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -32,6 +33,18 @@ WORKBUDDY_NODE_BIN_DIR = os.environ.get(
 )
 SEARCH_RETRY_DELAYS = (5, 10, 15)
 ZERO_RESULT_RETRY_DELAYS = (3, 4, 4, 4)
+AUDIT_CREDENTIAL_ENV_KEYS = (
+    "FEISHU_APP_ID",
+    "FEISHU_APP_SECRET",
+    "FEISHU_ACCESS_TOKEN",
+    "FEISHU_TENANT_ACCESS_TOKEN",
+    "LARK_ACCESS_TOKEN",
+    "FEISHU_COOKIE",
+)
+AUDIT_CREDENTIAL_PATTERN = re.compile(
+    r"(?i)\b(app[_-]?secret|access[_-]?token|tenant[_-]?access[_-]?token|"
+    r"authorization|cookie)\b(\s*[:=]\s*)([^\s,;]+)"
+)
 
 _LARK_OAPI_MODULE = None
 _LARK_OAPI_IMPORT_FAILED = False
@@ -269,6 +282,16 @@ def _redact_audit_text(value, sensitive_text="", limit=500):
     text = "" if value is None else str(value)
     if sensitive_text:
         text = text.replace(sensitive_text, "<redacted_source_query>")
+    for key in AUDIT_CREDENTIAL_ENV_KEYS:
+        credential = os.environ.get(key, "")
+        if len(credential) >= 4:
+            text = text.replace(credential, "<redacted_credential>")
+    text = AUDIT_CREDENTIAL_PATTERN.sub(
+        lambda match: (
+            f"{match.group(1)}{match.group(2)}<redacted_credential>"
+        ),
+        text,
+    )
     return text[:limit]
 
 
@@ -585,8 +608,10 @@ def fetch_message_detail(
                 "source": source,
                 "message_id": message_id,
                 "ok": False,
-                "error": _truncate(error),
-                "stderr_summary": _truncate(getattr(result, "stderr", "")),
+                "error": _redact_audit_text(error),
+                "stderr_summary": _redact_audit_text(
+                    getattr(result, "stderr", "")
+                ),
                 "transport": "lark_cli",
             }
         )
@@ -730,7 +755,7 @@ def send_card(
                 chat_source=chat_source,
                 error="send_transport_error",
                 transport="lark_cli",
-                oapi_failure_reason=_truncate(oapi_result, 200),
+                oapi_failure_reason=_redact_audit_text(oapi_result, limit=200),
                 transport_failure_reason=failure_reason,
                 **size_meta,
             )
@@ -750,7 +775,7 @@ def send_card(
             "chat_source": chat_source,
         }
         audit_error = "send_response_parse_failed"
-        audit_detail = {"stderr_summary": _truncate(detail)}
+        audit_detail = {"stderr_summary": _redact_audit_text(detail)}
     else:
         if data.get("ok"):
             message_id = (data.get("data") or {}).get("message_id", "unknown")
@@ -770,7 +795,9 @@ def send_card(
                     chat_id=chat_id,
                     chat_source=chat_source,
                     transport="lark_cli",
-                    oapi_failure_reason=_truncate(oapi_result, 200),
+                    oapi_failure_reason=_redact_audit_text(
+                        oapi_result, limit=200
+                    ),
                     **size_meta,
                 )
                 path = audit.flush()
@@ -795,7 +822,9 @@ def send_card(
             "chat_source": chat_source,
         }
         audit_error = "send_api_error"
-        audit_detail = {"detail": _truncate(json.dumps(data, ensure_ascii=False))}
+        audit_detail = {
+            "detail": _redact_audit_text(json.dumps(data, ensure_ascii=False))
+        }
     if meta:
         error["meta"] = meta
     if audit:
@@ -805,7 +834,7 @@ def send_card(
             chat_source=chat_source,
             error=audit_error,
             transport="lark_cli",
-            oapi_failure_reason=_truncate(oapi_result, 200),
+            oapi_failure_reason=_redact_audit_text(oapi_result, limit=200),
             **audit_detail,
             **size_meta,
         )

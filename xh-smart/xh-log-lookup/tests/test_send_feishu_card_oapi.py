@@ -737,6 +737,48 @@ class OapiSendTest(unittest.TestCase):
         argv = command_argv(cli.call_args.args[0])
         self.assertEqual(argv[argv.index("--user-id") + 1], user_id)
 
+    def test_send_card_audit_redacts_transport_credentials(self):
+        audit = SimpleNamespace(
+            set_send=mock.Mock(), flush=mock.Mock(return_value="/tmp/audit.json")
+        )
+        cli_response = SimpleNamespace(
+            stdout=json.dumps({"ok": True, "data": {"message_id": "om_cli"}}),
+            stderr="",
+        )
+        failure = (
+            "app_secret=secret-value "
+            "access_token=token-value Cookie=cookie-value"
+        )
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "FEISHU_APP_SECRET": "secret-value",
+                "FEISHU_ACCESS_TOKEN": "token-value",
+                "FEISHU_COOKIE": "cookie-value",
+            },
+            clear=False,
+        ), mock.patch.object(
+            send_feishu_card,
+            "_send_card_via_oapi",
+            return_value=(False, failure),
+        ), mock.patch.object(
+            send_feishu_card, "_lark_run", return_value=cli_response
+        ):
+            send_feishu_card.send_card(
+                "oc_target",
+                {"schema": "2.0", "body": {"elements": []}},
+                "--chat-id",
+                quiet_success=True,
+                audit=audit,
+            )
+
+        recorded = json.dumps(audit.set_send.call_args.kwargs, ensure_ascii=False)
+        self.assertNotIn("secret-value", recorded)
+        self.assertNotIn("token-value", recorded)
+        self.assertNotIn("cookie-value", recorded)
+        self.assertIn("<redacted_credential>", recorded)
+
     def test_send_card_cli_transport_failure_is_mapped_and_audited(self):
         audit = SimpleNamespace(
             set_send=mock.Mock(), flush=mock.Mock(return_value="/tmp/audit.json")

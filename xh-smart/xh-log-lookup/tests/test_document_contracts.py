@@ -10,6 +10,9 @@ SKILL_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = SKILL_ROOT.parents[1]
 SKILL_FILE = SKILL_ROOT / "SKILL.md"
 README_FILE = REPO_ROOT / "README.md"
+FEISHU_CARD_TEMPLATE_FILE = (
+    SKILL_ROOT / "references" / "common" / "feishu-card-template.md"
+)
 PUBLIC_CLIS = {
     "cls_query.py",
     "resolve_hermes_session.py",
@@ -36,6 +39,7 @@ class DocumentContractsTest(unittest.TestCase):
     def setUpClass(cls):
         cls.skill_text = SKILL_FILE.read_text(encoding="utf-8")
         cls.readme_text = README_FILE.read_text(encoding="utf-8")
+        cls.card_template_text = FEISHU_CARD_TEMPLATE_FILE.read_text(encoding="utf-8")
 
     def test_allowed_python_tools_are_the_public_cli_entrypoints(self):
         frontmatter = self.skill_text.split("---", 2)[1]
@@ -84,6 +88,19 @@ class DocumentContractsTest(unittest.TestCase):
             {path.name for path in scripts.glob("*.py")} & PUBLIC_CLIS,
             PUBLIC_CLIS,
         )
+
+    def test_sensitive_business_values_are_plaintext_in_user_visible_output(self):
+        self.assertIn("业务敏感信息明文契约", self.skill_text)
+        self.assertIn("业务信息保真边界", self.card_template_text)
+        for document in (self.skill_text, self.card_template_text):
+            for term in ("手机号", "银行卡号", "身份证号", "姓名"):
+                self.assertIn(term, document)
+            self.assertIn("按查询结果原文输出", document)
+            self.assertIn("纯文本 fallback", document)
+            self.assertIn("数据源本身已脱敏或加密", document)
+            self.assertIn("不猜测、拼接或跨日志还原", document)
+            self.assertIn("FEISHU_APP_SECRET", document)
+            self.assertIn("路由和传输审计继续不记录原始查询文本或凭据", document)
 
 
 if __name__ == "__main__":
