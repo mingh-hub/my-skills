@@ -11,24 +11,31 @@ import os
 import sqlite3
 import subprocess
 import sys
+from pathlib import Path
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+import feishu_transport
 
 
 HERMES_STATE_DB = os.path.expanduser("~/.hermes/state.db")
-LARK_CLI_CANDIDATES = (
-    "/Users/user/.workbuddy/binaries/node/cli-connector-packages/bin/lark-cli",
-    os.path.expanduser("~/.workbuddy/binaries/node/cli-connector-packages/bin/lark-cli"),
-)
-WORKBUDDY_NODE_BIN_DIR = os.path.expanduser(
-    "~/.workbuddy/binaries/node/versions/22.22.2/bin"
-)
+LARK_CLI_CANDIDATES = feishu_transport.LARK_CLI_CANDIDATE_PATHS
+WORKBUDDY_NODE_BIN_DIR = feishu_transport.WORKBUDDY_NODE_BIN_DIR
 ID_PREFIXES = ("ou_", "om_", "on_")
 
 
 def _find_lark_cli():
-    for candidate in LARK_CLI_CANDIDATES:
-        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
-            return candidate
-    return None
+    original = feishu_transport.LARK_CLI_CANDIDATE_PATHS
+    feishu_transport.LARK_CLI_CANDIDATE_PATHS = LARK_CLI_CANDIDATES
+    try:
+        return feishu_transport.resolve_lark_cli()
+    except FileNotFoundError:
+        return None
+    finally:
+        feishu_transport.LARK_CLI_CANDIDATE_PATHS = original
 
 
 def _row_to_result(row):
@@ -110,53 +117,35 @@ def resolve():
     return _resolve_from_current_environment()
 
 
-def to_open_id(uid, uid_type="user_id"):
-    """Convert a Feishu user_id or union_id to an open_id."""
-    if not uid:
-        return None
-    uid = str(uid).strip()
-    if uid.startswith("ou_"):
-        return uid
+def _lark_run(args):
     lark_cli = _find_lark_cli()
     if not lark_cli:
-        return None
-    cmd = [
-        lark_cli,
-        "contact",
-        "+get-user",
-        "--user-id",
-        uid,
-        "--user-id-type",
-        uid_type,
-        "--as",
-        "bot",
-    ]
-    env = os.environ.copy()
-    env["LARK_CLI_NO_PROXY"] = "1"
-    env["PATH"] = os.pathsep.join(
-        part
-        for part in (
-            WORKBUDDY_NODE_BIN_DIR,
-            os.path.dirname(lark_cli),
-            env.get("PATH", ""),
-        )
-        if part
-    )
+        raise FileNotFoundError("lark-cli not found")
+    command = [lark_cli, *list(args)]
+    original_node_dir = feishu_transport.WORKBUDDY_NODE_BIN_DIR
+    feishu_transport.WORKBUDDY_NODE_BIN_DIR = WORKBUDDY_NODE_BIN_DIR
     try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=15,
-            env=env,
-        )
-        data = json.loads(result.stdout)
-        if data.get("ok"):
-            user = (data.get("data") or {}).get("user") or {}
-            return user.get("open_id") or None
-    except Exception:
-        return None
-    return None
+        env = feishu_transport.lark_env(lark_cli)
+    finally:
+        feishu_transport.WORKBUDDY_NODE_BIN_DIR = original_node_dir
+    return subprocess.run(
+        command,
+        shell=False,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        env=env,
+    )
+
+
+def to_open_id(uid, uid_type="user_id"):
+    """Convert through the shared Feishu transport without loading the SDK."""
+    return feishu_transport.to_open_id(
+        uid,
+        uid_type,
+        client_factory=lambda: None,
+        runner=_lark_run,
+    )
 
 
 def main():

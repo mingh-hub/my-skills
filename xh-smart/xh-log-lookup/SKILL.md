@@ -167,6 +167,7 @@ SQL 构造顺序：
 - 方法存在但固定 message 不匹配时，不要把旧模板当主路径；改用 `serviceName:\"{服务}\" AND message:\"{标识符}\"`，并 grep 当前代码找新日志前缀。
 - 方法不存在、源码缺失或服务不匹配时，标记模板疑似过期；先按 traceId/标识符值搜，再回代码确认入口。
 - 推荐查询 0 命中时，继续扩大时间做值搜；如果能搜到日志，说明查询语法可用但目标时间段无命中；扩大到当前时间前一个月仍无日志时，停止扩大时间，回本地项目确认日志是否已下线、模板是否过期或入口是否变更。
+- 无可用源码根目录时，`validate_query_anchors.py` 将该行标为 `verification_status=unverified`，不得计入有效或无效；默认校验为 advisory，只有显式 `--strict` 才因 unverified 或告警返回非零。
  
 ### 日志查询无结果排查清单
 
@@ -218,7 +219,7 @@ SQL 构造顺序：
 >
 > **反例（禁止）**：结论分析完成后，认为"问题简单/已查清/直接答复更快"，**不调脚本就把诊断文本发给用户**——即使内容正确，也按交付失败处理。"是否发卡"不由结论复杂度决定，只由本流程决定。
 
-**发送通道（2026-08-05 起双通道）**：`send_feishu_card.py` 的卡片发送、用户 ID 转换和消息详情读取优先使用 `lark_oapi` bot SDK；进程环境中的 `FEISHU_APP_ID` / `FEISHU_APP_SECRET` 优先，缺失时读取 `~/.hermes/.env`。SDK、凭据或请求不可用时自动降级到现有 lark-cli，`--resolve-chat` 使用的 `messages-search` 仍只走 lark-cli。仅 CLI 启动且当前解释器无法导入 SDK 时，脚本才尝试用 Hermes venv Python 重新执行，模块导入不会触发重启。OAPI 发送成功会在普通 stdout 和路由审计中记录 `"transport":"lark_oapi"`；`--quiet-success` 继续抑制成功 stdout，不改变退出码语义。
+**发送通道（2026-08-05 起双通道）**：`send_feishu_card.py` 的卡片发送、用户 ID 转换和消息详情读取优先使用 `lark_oapi` bot SDK；进程环境中的 `FEISHU_APP_ID` / `FEISHU_APP_SECRET` 优先，缺失时读取 `~/.hermes/.env`。SDK、凭据或请求不可用时自动降级到现有 lark-cli，`--resolve-chat` 使用的 `messages-search` 仍只走 lark-cli。SDK、凭据和 lark-cli 都只在实际传输需要时惰性解析；模块导入和 `--help` 不查找 CLI、不重启解释器。OAPI 发送成功会在普通 stdout 和路由审计中记录 `"transport":"lark_oapi"`；`--quiet-success` 继续抑制成功 stdout，不改变退出码语义。
 
 技能被触发后，在输出最终结论前执行以下流程：
 
@@ -314,32 +315,17 @@ python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py \
 
 匹配不到业务模块时，先问用户确认。
 
-## 标准工作流
+## 工作流索引
 
-### 纯源码 `local_logic`
+强制步骤只在上文维护，避免模式说明与执行流程漂移：
 
-1. 识别业务模块并读取对应 module reference，只提取待验证的类、方法、字段和业务节点。
-2. 用 `source_inspect.py --status` 记录仓库上下文；用 `--search` 和 `--file` 回源码确认完整调用链、判断条件和外部依赖。
-3. 对照 reference 与当前源码；有冲突时以当前源码为准，并在未确认项中说明 reference 可能过期。
-4. 组装业务逻辑卡片，执行「来源识别与飞书卡片发送」，使用 `--content-mode business-logic`。本流程任何步骤都不得调用 CLS。
+| 模式 | 执行入口 | 交付模式 |
+|------|----------|----------|
+| `local_logic` | 「分析模式选择」→「local_logic」→「本地源码工具」 | `business-logic`；禁止 CLS |
+| `log_diagnosis` | 「log_diagnosis」→「数据统计/SQL/锚点/无结果/API 优先级」 | `log`；证据不足自动升级 |
+| `combined` | 「combined」同时应用源码与全部日志强制规则 | `combined`；区分源码预期与日志证据 |
 
-### 日志 `log_diagnosis`
-
-1. 提取环境、时间范围、标识符和业务意图；按“标识符 → 业务链路 → 服务健康 → 服务别名范围”确认查询目标，再路由到业务模块 reference 或服务组范围。
-2. 按“SQL 条件下沉强制约束”先组装完整 CLS 查询；条件不明确时按“模块 reference 锚点 → 本地代码日志 → 保守兜底查询”顺序收窄，禁止宽查后筛。
-3. 判断是否为统计模式。是 → `cls_query.py --method auto --api-limit 500` 先探测；按 `log_count/is_complete/has_more` 决定精确统计或采样统计。
-4. 非统计模式默认 `cls_query.py --method auto`。API 不可用或结果不完整时，用返回的 `cls_url` 交给 WorkBuddy 内置浏览器；必要时再显式切换本地 Chrome 备用路径。
-5. 0 命中时按“无结果排查清单”回退；命中但无法支持确定结论时，自动升级 `combined`。
-6. 日志证据充分时用 `--content-mode log` 发卡。仅使用本地 Chrome 备用窗口时，最后调用 `cls_query.py --close` 关窗口。
-
-### 联合 `combined`
-
-1. 按 `local_logic` 步骤读取源码，得到预期入口、调用顺序、条件分支、关键字段和日志锚点。
-2. 按 `log_diagnosis` 规则查询实际日志，用日志验证请求实际经过、跳过或失败的节点。
-3. 结论分为“源码预期”“日志证据”“联合判断”“阻塞/未确认项”，禁止把源码可能路径写成日志已证实事实。
-4. 使用 `--content-mode combined` 发卡；发送规则和失败降级与其他模式一致。
-
-无论哪种模式，**结论只能通过飞书卡片正常交付**：发卡成功后当前会话静默或只输出 `已发送飞书卡片。`；只有脚本返回非 0/失败时才 fallback 为当前会话纯文本。
+所有模式统一执行「来源识别与飞书卡片发送」；发送失败后才允许使用纯文本 fallback。业务细节和查询锚点只从对应 module reference 读取，CLS、源码和卡片实现细节按 `references/common/` 的索引按需读取。
 
 ## 本地源码工具
 

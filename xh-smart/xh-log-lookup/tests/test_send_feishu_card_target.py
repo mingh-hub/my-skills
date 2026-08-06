@@ -18,6 +18,14 @@ send_feishu_card = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(send_feishu_card)
 
 
+def command_argv(command):
+    return shlex.split(command) if isinstance(command, str) else list(command)
+
+
+def command_text(command):
+    return shlex.join(command_argv(command))
+
+
 class LarkRunTest(unittest.TestCase):
     def test_lark_run_uses_absolute_cli_when_path_does_not_include_lark_cli(self):
         seen = {}
@@ -27,20 +35,25 @@ class LarkRunTest(unittest.TestCase):
             seen["env"] = env
             return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
 
+        cli_path = "/opt/workbuddy/bin/lark-cli"
         with mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}, clear=False):
-            with mock.patch.object(send_feishu_card.subprocess, "run", side_effect=fake_run):
+            with mock.patch.object(
+                send_feishu_card, "_resolve_lark_cli", return_value=cli_path
+            ), mock.patch.object(
+                send_feishu_card.subprocess, "run", side_effect=fake_run
+            ):
                 result = send_feishu_card._lark_run("lark-cli --help")
 
         self.assertEqual(result.returncode, 0)
         self.assertEqual(
             seen["cmd"],
-            f"{send_feishu_card.LARK_CLI_ABSOLUTE} --help",
+            [cli_path, "--help"],
         )
         self.assertEqual(
             seen["env"]["PATH"],
             (
                 f"{send_feishu_card.WORKBUDDY_NODE_BIN_DIR}:"
-                f"{send_feishu_card.LARK_CLI_BIN_DIR}:"
+                "/opt/workbuddy/bin:"
                 "/usr/bin:/bin"
             ),
         )
@@ -422,8 +435,10 @@ class DirectSendTest(unittest.TestCase):
                 user_id="ou_direct",
             )
 
-        self.assertIn("messages-send --user-id 'ou_direct'", seen["cmd"])
-        self.assertNotIn("--chat-id", seen["cmd"])
+        self.assertEqual(
+            command_argv(seen["cmd"])[2:4], ["--user-id", "ou_direct"]
+        )
+        self.assertNotIn("--chat-id", command_argv(seen["cmd"]))
 
     def test_send_card_shell_quotes_direct_user_id(self):
         seen = {}
@@ -451,10 +466,8 @@ class DirectSendTest(unittest.TestCase):
                 user_id=malicious_user_id,
             )
 
-        self.assertIn(
-            f"--user-id {shlex.quote(malicious_user_id)}",
-            seen["cmd"],
-        )
+        argv = command_argv(seen["cmd"])
+        self.assertEqual(argv[argv.index("--user-id") + 1], malicious_user_id)
 
     def test_send_card_shell_quotes_direct_chat_id(self):
         seen = {}
@@ -480,10 +493,8 @@ class DirectSendTest(unittest.TestCase):
                 quiet_success=True,
             )
 
-        self.assertIn(
-            f"--chat-id {shlex.quote(malicious_chat_id)}",
-            seen["cmd"],
-        )
+        argv = command_argv(seen["cmd"])
+        self.assertEqual(argv[argv.index("--chat-id") + 1], malicious_chat_id)
 
     def test_to_open_id_reads_nested_user_payload(self):
         self.assertTrue(
@@ -534,8 +545,8 @@ class DirectSendTest(unittest.TestCase):
         ) as lark_run:
             send_feishu_card._to_open_id(malicious_uid, uid_type="user_id")
 
-        command = lark_run.call_args.args[0]
-        self.assertIn(f"--user-id {shlex.quote(malicious_uid)}", command)
+        argv = command_argv(lark_run.call_args.args[0])
+        self.assertEqual(argv[argv.index("--user-id") + 1], malicious_uid)
 
     def test_sender_conversion_failure_omits_group_mention(self):
         captured = {}
@@ -603,13 +614,13 @@ class SearchMessagesCommandTest(unittest.TestCase):
         return captured["cmd"]
 
     def test_mixed_search_omits_chat_type_at_bot_and_sender_type(self):
-        cmd = self._capture_search_command()
+        cmd = command_text(self._capture_search_command())
 
         self.assertNotIn("--chat-type", cmd)
         self.assertNotIn("--at-chatter-ids", cmd)
         self.assertNotIn("--sender-type user", cmd)
         self.assertIn("--query '看下我们组近半小时服务异常情况'", cmd)
-        self.assertIn("--start '2026-06-01T10:30:00+08:00'", cmd)
+        self.assertIn("--start 2026-06-01T10:30:00+08:00", cmd)
         self.assertIn("--page-limit 1", cmd)
         self.assertIn("--page-size 5", cmd)
 
@@ -636,9 +647,10 @@ class SearchMessagesCommandTest(unittest.TestCase):
         finally:
             send_feishu_card._lark_run = original_lark_run
 
-        self.assertIn("--query '@Tom'", captured["cmd"])
-        self.assertIn("--page-limit 5", captured["cmd"])
-        self.assertIn("--page-size 10", captured["cmd"])
+        cmd = command_text(captured["cmd"])
+        self.assertIn("--query @Tom", cmd)
+        self.assertIn("--page-limit 5", cmd)
+        self.assertIn("--page-size 10", cmd)
 
     def test_search_audit_records_result_summary(self):
         original_lark_run = send_feishu_card._lark_run
@@ -698,6 +710,29 @@ class SearchMessagesCommandTest(unittest.TestCase):
         search = audit.data["searches"][0]
         self.assertEqual(search["attempt_count"], 4)
         self.assertTrue(all(item["timeout"] for item in search["attempts"]))
+
+    def test_search_cli_unavailable_returns_audited_failure_without_retry(self):
+        original_lark_run = send_feishu_card._lark_run
+        sleeps = []
+        audit = send_feishu_card.RouteAudit()
+        try:
+            send_feishu_card._lark_run = mock.Mock(
+                side_effect=FileNotFoundError("lark-cli unavailable")
+            )
+            result = send_feishu_card._search_messages(
+                query="sensitive source query",
+                start="2026-06-01T10:30:00+08:00",
+                audit=audit,
+                sleep_func=sleeps.append,
+            )
+        finally:
+            send_feishu_card._lark_run = original_lark_run
+
+        self.assertIsNone(result)
+        self.assertEqual(sleeps, [])
+        attempt = audit.data["searches"][0]["attempts"][0]
+        self.assertEqual(attempt["error_summary"], "transport_error:FileNotFoundError")
+        self.assertNotIn("sensitive source query", str(audit.data))
 
     def test_search_retry_success_does_not_continue(self):
         original_lark_run = send_feishu_card._lark_run
@@ -1013,7 +1048,8 @@ class ResolveChatMixedSearchTest(unittest.TestCase):
 
         def fake_lark_run(cmd):
             calls.append(cmd)
-            if "+messages-search" in cmd and "--query '@Tom'" not in cmd:
+            cmd_text = command_text(cmd)
+            if "+messages-search" in cmd_text and "--query @Tom" not in cmd_text:
                 return SimpleNamespace(
                     stdout='{"ok": true, "data": {"total": 0}}',
                     stderr="",
@@ -1048,13 +1084,18 @@ class ResolveChatMixedSearchTest(unittest.TestCase):
         self.assertEqual(result["matched_msg_id"], "om_group")
         self.assertEqual(result["search_strategy"], "latest_query_mixed_at_tom_fallback_15m")
         self.assertGreaterEqual(result["similarity_score"], 0.99)
-        self.assertTrue(any("--query '@Tom'" in cmd and "--page-limit 5" in cmd for cmd in calls))
+        self.assertTrue(any(
+            "--query @Tom" in command_text(cmd)
+            and "--page-limit 5" in command_text(cmd)
+            for cmd in calls
+        ))
 
     def test_at_tom_fallback_prefers_similarity_over_latest_message(self):
         source_query = "测试环境 traceId:038490bf1f18b2f8 ,order应用 ,分支:release-5.821.0 ,分析异常原因A"
 
         def fake_lark_run(cmd):
-            if "+messages-search" in cmd and "--query '@Tom'" not in cmd:
+            cmd_text = command_text(cmd)
+            if "+messages-search" in cmd_text and "--query @Tom" not in cmd_text:
                 return SimpleNamespace(
                     stdout='{"ok": true, "data": {"total": 0}}',
                     stderr="",
@@ -1101,7 +1142,8 @@ class ResolveChatMixedSearchTest(unittest.TestCase):
 
     def test_at_tom_fallback_filters_group_without_bot_mention(self):
         def fake_lark_run(cmd):
-            if "+messages-search" in cmd and "--query '@Tom'" not in cmd:
+            cmd_text = command_text(cmd)
+            if "+messages-search" in cmd_text and "--query @Tom" not in cmd_text:
                 return SimpleNamespace(
                     stdout='{"ok": true, "data": {"total": 0}}',
                     stderr="",
@@ -1140,7 +1182,8 @@ class ResolveChatMixedSearchTest(unittest.TestCase):
         source_query = "测试环境 traceId:038490bf1f18b2f8 分析异常原因"
 
         def fake_lark_run(cmd):
-            if "+messages-search" in cmd and "--query '@Tom'" not in cmd:
+            cmd_text = command_text(cmd)
+            if "+messages-search" in cmd_text and "--query @Tom" not in cmd_text:
                 return SimpleNamespace(
                     stdout='{"ok": true, "data": {"total": 0}}',
                     stderr="",

@@ -3,7 +3,7 @@ name: run-my-skills
 description: Run, test, and verify my-skills Python tools. Use when asked to smoke-test the tools, verify imports work, check cls_query URL building, or validate skill query anchors.
 ---
 
-A collection of Hermes AI agent skills (not a traditional app). "Running" it means verifying the Python CLI tools under `xh-smart/*/tools/` are functional. Drive it via `.agents/skills/run-my-skills/smoke.sh`.
+A collection of Hermes AI agent skills (not a traditional app). "Running" it means verifying the public CLIs under `xh-smart/xh-log-lookup/scripts/` plus the remaining `xh-smart/*/tools/` utilities. Drive it via `.agents/skills/run-my-skills/smoke.sh`.
 
 All paths below are relative to the repo root.
 
@@ -19,17 +19,17 @@ All paths below are relative to the repo root.
 bash .agents/skills/run-my-skills/smoke.sh
 ```
 
-Runs all tools in safe mode (no Chrome, no network calls). Output is a pass/fail summary.
+Runs six `xh-log-lookup` CLI help checks, a shared-config import, a CLS URL-only check, advisory anchor validation, the complete unit suite, and agent YAML checks. It does not open Chrome or call CLS/Feishu network APIs.
 
 ## Direct invocation
 
 ### CLS query — URL build only (no browser)
 
 ```bash
-python3 xh-smart/xh-log-lookup/tools/cls_query.py \
+python3 xh-smart/xh-log-lookup/scripts/cls_query.py \
   --env prod \
   --query 'serviceName:"order" AND message:"20161002000002677537"' \
-  --no-browser
+  --method workbuddy
 ```
 
 Returns JSON with `cls_url`, `expanded_url`, `topic_id`. No side effects.
@@ -37,9 +37,10 @@ Returns JSON with `cls_url`, `expanded_url`, `topic_id`. No side effects.
 ### CLS query — open Chrome and extract page text
 
 ```bash
-python3 xh-smart/xh-log-lookup/tools/cls_query.py \
+python3 xh-smart/xh-log-lookup/scripts/cls_query.py \
   --env prod \
   --query 'traceId:"37426d42fdc699d1"' \
+  --method local-chrome --use-local-chrome \
   --output /tmp/cls_output.txt
 ```
 
@@ -48,18 +49,18 @@ Opens a dedicated Chrome window via AppleScript, loads all pages, extracts `docu
 ### Validate query anchors
 
 ```bash
-python3 xh-smart/xh-log-lookup/tools/validate_query_anchors.py \
-  --skill xh-smart/xh-log-lookup/xh-log-lookup-order/SKILL.md \
+python3 xh-smart/xh-log-lookup/scripts/validate_query_anchors.py \
+  --skill xh-smart/xh-log-lookup/references/modules/order.md \
   --source-root /Users/user/mingh/workspace/order \
   --json
 ```
 
-Checks that method entries, serviceNames, and message anchors in SKILL.md tables still match source code. Reports OK/WARN/skip per row.
+Checks that method entries, serviceNames, and message anchors in SKILL.md tables still match source code. Missing source roots are reported as `unverified`; default mode is advisory, while `--strict` returns nonzero for warnings or unverified rows.
 
 ### Send Feishu card
 
 ```bash
-python3 xh-smart/xh-log-lookup/tools/send_feishu_card.py \
+python3 xh-smart/xh-log-lookup/scripts/send_feishu_card.py \
   --title "✅ 测试 · 05-20" \
   --color green \
   --data '{"summary_fields":[{"label":"状态","value":"正常"}],"analysis":"smoke test","log_count":0}'
@@ -79,7 +80,7 @@ Manages Chrome Argus SSO sessions. Requires macOS + Chrome.
 
 ## Gotchas
 
-- **All browser automation requires macOS + Google Chrome.** AppleScript (`osascript`) is the only supported automation path. The smoke test avoids this by using `--no-browser` and `--help` flags.
-- **`cls_query.py` cannot carry Chinese in `queryBase64`.** Chinese queries need the contenteditable injection workflow documented in `xh-smart/xh-log-lookup/references/cls-react-contenteditable-injection.md`.
+- **All browser automation requires macOS + Google Chrome.** AppleScript (`osascript`) is the only supported automation path. The smoke test avoids this by using `--method workbuddy` and `--help` flags.
+- **Chinese queries are supported by the API path.** Only the browser fallback URL has `queryBase64` constraints; use `xh-smart/xh-log-lookup/references/common/cls-react-contenteditable-injection.md` when an ASCII-safe fallback query cannot preserve the intended condition.
 - **Feishu tools need credentials.** Without `~/.hermes/.env` containing `FEISHU_APP_ID` and `FEISHU_APP_SECRET`, `send_feishu_card.py` will fail at runtime (but `--help` works).
-- **`validate_query_anchors.py` reports "skip" when source roots are missing.** This is expected — it means it can't verify anchors against code, not that the skill is broken.
+- **`validate_query_anchors.py` reports `unverified` when source roots are missing.** This is advisory by default and means the anchors were not checked, not that they are valid or invalid.

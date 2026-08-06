@@ -13,7 +13,10 @@ my-skills/
         cls_query.py            # CLS API / WorkBuddy URL / 本地 Chrome 备用查询
         resolve_workspace.py    # 按项目名自动定位本地源码仓库
         source_inspect.py       # 受限的只读源码状态、搜索和片段读取
-        send_feishu_card.py     # 三种内容模式的飞书卡片发送、来源反查、群聊自动 @
+        send_feishu_card.py     # 飞书卡片薄 CLI 入口和兼容导出
+        feishu_card.py          # 卡片 schema、日志解析、渲染和大小适配
+        feishu_routing.py       # 来源解析、目标优先级和路由审计
+        feishu_transport.py     # OAPI/CLI 传输、凭据与 ID 转换
         validate_query_anchors.py # 校验 reference 中的查询锚点
         skill_config.py         # 内部共享解析工具
       tests/                    # 单元测试，覆盖模式路由、源码工具、CLS、卡片 schema/渲染和发送目标
@@ -28,7 +31,7 @@ my-skills/
         argus_session.py
         test_encrypt.py
       references/
-  .claude/skills/run-my-skills/ # Smoke 测试技能
+  .agents/skills/run-my-skills/ # 离线 smoke 测试技能
 ```
 
 ## 技能清单
@@ -86,7 +89,7 @@ my-skills/
 | `cls_query.py` | `xh-smart/xh-log-lookup/scripts/` | 优先通过 CLS HTTP API 查询日志；默认 `--api-limit 500`，用于统计探测和小数据精确统计；必要时输出 WorkBuddy fallback URL，显式选择时才用本地 Chrome/AppleScript |
 | `resolve_workspace.py` | `xh-smart/xh-log-lookup/scripts/` | 按 `XH_WORKSPACE_ROOTS` 和项目名自动定位本地源码仓库，并可更新 `SKILL.md` 服务映射表中的本地路径 |
 | `source_inspect.py` | `xh-smart/xh-log-lookup/scripts/` | 只允许访问 `SKILL.md` 映射项目；支持 `--status` 查看分支/commit/dirty、`--search` 搜索源码与配置、`--file` 读取仓库内相对路径片段；拒绝越界、隐藏/构建目录及指向不允许位置的符号链接，搜索最多 200 条，单次读取最多 400 行，不执行任何仓库更新或文件写入 |
-| `send_feishu_card.py` | `xh-smart/xh-log-lookup/scripts/` | 发送飞书交互式卡片；`--content-mode log|business-logic|combined` 控制日志、纯源码和联合卡片；保留来源反查、p2p/group 路由、群聊 mentions 校验、`@Tom` 候选池、重试、审计、群聊 sender 自动 @、成功静默和纯文本 fallback |
+| `send_feishu_card.py` | `xh-smart/xh-log-lookup/scripts/` | 飞书卡片薄 CLI 入口；`feishu_card.py` 负责 schema/渲染/28KB 适配，`feishu_routing.py` 负责来源选择和审计，`feishu_transport.py` 负责 OAPI/CLI 发送与 ID 转换；入口保留原参数、JSON 和常用 Python 导出 |
 | `validate_query_anchors.py` | `xh-smart/xh-log-lookup/scripts/` | 校验业务 reference 中推荐查询的代码锚点是否仍与源码匹配；常用 `--all --summary` 扫描 `references/modules/*.md` |
 | `skill_config.py` | `xh-smart/xh-log-lookup/scripts/` | 内部共享解析工具，供其它脚本读取/渲染 `SKILL.md` 服务映射表 |
 | `argus_session.py` | `xh-smart/xh-sso-access/tools/` | 管理本地 Chrome Argus 会话窗口（创建/复用/校验 cookie/提取 cookie） |
@@ -94,8 +97,8 @@ my-skills/
 
 ## 环境要求
 
-- **Python 3.9+** — `xh-log-lookup` 主要工具仅依赖标准库。
-- **WorkBuddy/飞书运行环境** — `xh-log-lookup` 通过 `send_feishu_card.py` + `lark-cli` 发送飞书卡片；成功后当前会话静默或极短确认。WorkBuddy 客户端直问建议在 `~/.workbuddy/.env` 配置 `WORKBUDDY_HOME_CHANNEL_CHAT_ID`，用于来源反查失败时发到 home channel 私聊；未配置且无来源时降级为当前会话文本回复。
+- **Python 3.10+** — `xh-log-lookup` 核心工具仅依赖标准库，`lark_oapi` 为可选依赖。
+- **WorkBuddy/飞书运行环境** — `xh-log-lookup` 通过 `send_feishu_card.py` 和可用的 OAPI/`lark-cli` 通道发送飞书卡片；成功后当前会话静默或极短确认。来源无法确认时默认降级为当前会话文本；`WORKBUDDY_HOME_CHANNEL_CHAT_ID` 只在显式传 `--allow-home-channel-fallback` 的批量或定时任务中启用。
 - **macOS + Google Chrome** — 仅 WorkBuddy 不可用、页面操作失败或需要本地 Chrome 备用提取时需要。
 - 可选：`cryptography` Python 包，仅 `xh-sso-access/tools/test_encrypt.py` 需要。
 
@@ -115,29 +118,31 @@ python3 xh-smart/xh-log-lookup/scripts/resolve_workspace.py --check
 ## Smoke 测试
 
 ```bash
-bash .claude/skills/run-my-skills/smoke.sh
+bash .agents/skills/run-my-skills/smoke.sh
 ```
 
-Smoke 测试会验证现有 `tools/` Python 工具和 agent 定义：
+Smoke 全程离线，不访问 CLS、飞书或 Chrome。它会验证：
 
-- 对 `*/tools/*.py` 执行 `--help` 检查（缺依赖标记 SKIP）
-- 对现有 `*/agents/*.yaml` 执行格式校验（当前主要是 `xh-sso-access/agents/openai.yaml`）
-
-当前 smoke 脚本不会自动扫描 `xh-log-lookup/scripts/`；其中模式路由、源码检查、核心解析、卡片 schema/内容模式和发送目标选择由下面的单元测试覆盖，其它脚本可按需直接执行 `--help`、`--check`、`--status` 或 `--json`。新增 `tools/` 或 agent 定义后无需修改脚本，测试会按现有目录自动扫描。
+- `xh-log-lookup/scripts/` 下 6 个公开 CLI 的 `--help`
+- `skill_config.py` 离线导入、CLS WorkBuddy URL-only 输出和无源码锚点 advisory JSON
+- `xh-log-lookup` 完整单元测试
+- 自动发现的 `*/agents/*.yaml` 基本格式
 
 ## 单元测试
 
 ```bash
-python3 -m unittest discover -s xh-smart/xh-log-lookup/tests
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover \
+  -s xh-smart/xh-log-lookup/tests -p 'test_*.py'
 ```
 
 当前单元测试覆盖：
 
-- `cls_query.py` 的日志级别解析和 API 响应解析
+- `cls_query.py` 的输入优先级、完整性状态、参数校验、API 错误体和日志级别解析
 - `SKILL.md` 的本地业务逻辑触发、三模式选择、自动升级、纯源码禁用 CLS 和修改类任务排除
-- `source_inspect.py` 的项目映射限制、仓库状态、源码搜索、文件片段和路径/数量边界
-- `send_feishu_card.py` 的发送目标优先级、来源反查兜底、审计记录
-- 飞书卡片 `--data` schema 校验、CLS 风格字段渲染及 `log`/`business-logic`/`combined` 内容模式
+- 服务映射 round-trip、工作区只读解析、原子更新、锚点 verified/unverified/strict 行为
+- `source_inspect.py` 的项目映射限制、`rg --fixed-strings` 快速路径、纯 Python fallback 和路径/数量边界
+- 飞书卡片 schema、UTF-8 字节截断、三种内容模式、来源反查、目标优先级、OAPI/CLI 降级和审计脱敏
+- README、allowed-tools、references、服务映射和 CLI 入口的文档契约
 
 ## 维护建议
 
