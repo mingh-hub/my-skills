@@ -11,7 +11,7 @@
 
 ## 何时读取
 
-当 `cls_query.py` 返回 0 条、页面状态异常、服务覆盖不完整、或需要解释查询限制时读取。
+当 `log_cls_query.py` 返回 0 条、页面状态异常、服务覆盖不完整、或需要解释查询限制时读取。
 
 ## 1. Topic 识别
 
@@ -62,7 +62,7 @@ CLS 页面默认只渲染部分结果。traceId 跨服务链路可能有数百�
 
 正确做法：
 
-- WorkBuddy 页面操作失败或需要批量自动提取时，切换到本地 Chrome 备用路径，用 `scripts/cls_query.py --use-local-chrome --max-load-more` 自动点击“加载更多”。
+- WorkBuddy 页面操作失败或需要批量自动提取时，切换到本地 Chrome 备用路径，用 `scripts/log_cls_query.py --use-local-chrome --max-load-more` 自动点击“加载更多”。
 - 提取全文后检查 `services` 覆盖。
 - 如果页面仍有“加载更多”且服务数过少，说明结果仍不完整。
 

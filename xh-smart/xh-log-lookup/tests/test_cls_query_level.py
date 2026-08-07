@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 
-SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "cls_query.py"
+SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "log_cls_query.py"
 SPEC = importlib.util.spec_from_file_location("cls_query", SCRIPT_PATH)
 cls_query = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(cls_query)

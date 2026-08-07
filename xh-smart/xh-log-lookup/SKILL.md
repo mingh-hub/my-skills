@@ -2,7 +2,7 @@
 name: xh-log-lookup
 description: 当用户需要查询生产或测试环境 CLS/Argus 日志、定位借款/下单/签约/权益/Hold单/解H/放款/还款/债转问题，使用 traceId/orderId/cid/contractNo/mobile/idNo 排查，或基于本地源码梳理业务流程、调用链、条件分支、字段语义时使用。
 allowed-tools:
-  - Bash(python3 ${WORKBUDDY_SKILL_DIR}/scripts/cls_query.py *)
+  - Bash(python3 ${WORKBUDDY_SKILL_DIR}/scripts/log_cls_query.py *)
   - Bash(python3 ${WORKBUDDY_SKILL_DIR}/scripts/validate_query_anchors.py *)
   - Bash(python3 ${WORKBUDDY_SKILL_DIR}/scripts/resolve_workspace.py *)
   - Bash(python3 ${WORKBUDDY_SKILL_DIR}/scripts/source_inspect.py *)
@@ -79,7 +79,7 @@ disable: false
 - 先执行 `source_inspect.py --project {项目名} --status`，记录仓库、当前分支、Commit 和工作区状态；未指定分支时读取当前本地分支及未提交工作区内容，不 fetch、不 pull、不 checkout。
 - 用户明确指定分支但当前分支不一致时，停止源码分析并请用户自行切换或确认使用当前分支；本技能不得代为切换。
 - 用 `--search` 定位类、方法、字段、MQ/RPC 调用和条件分支，再用 `--file --start-line --end-line` 读取必要片段。禁止凭 reference 内容冒充当前源码结论。
-- **禁止调用 `cls_query.py`**。用户明确不查日志时，不得因结论不完整而擅自升级到日志查询。
+- **禁止调用 `log_cls_query.py`**。用户明确不查日志时，不得因结论不完整而擅自升级到日志查询。
 - 源码路径失效时先执行 `resolve_workspace.py --check`；无法唯一定位时停止分析，发送阻塞说明，不得猜测业务逻辑。
 - 最终调用 `send_feishu_card.py --content-mode business-logic`。`summary_fields` 必须包含：业务模块、仓库、分支、Commit、工作区状态、分析范围；`table_data` 至少包含“步骤 / 类或方法 / 关键逻辑”；`analysis` 写核心结论、外部依赖、未确认项和源码依据。
 
@@ -103,7 +103,7 @@ disable: false
 
 **触发条件**：用户意图含 `统计`、`汇总`、`占比`、`成功率`、`总数`、`计数`、`分布`、`趋势`、`健康检查`、`有多少`、`多少笔`、`有几条`、`总共`、`一共`、`百分比`、`比例`、`平均`、`最多`、`最少` 任一关键词时，自动进入**统计模式**。健康检查（业务模块 reference 的 Step 0-4）**始终**属于统计模式。
 
-**先探测**：统计模式先执行 `cls_query.py --method auto --api-limit 500`，读取 `log_count/loaded_count/is_complete/has_more/fallback_method`。禁止在未说明完整性状态时输出统计结论。
+**先探测**：统计模式先执行 `log_cls_query.py --method auto --api-limit 500`，读取 `log_count/loaded_count/is_complete/has_more/fallback_method`。禁止在未说明完整性状态时输出统计结论。
 
 **按规模分档**：
 
@@ -136,7 +136,7 @@ disable: false
 - 分析要查的数据是否在子模块的流程追踪入口，是的话可以通过日志锚点查询，不是的话分析本地项目路径，确认查询`sql`,服务名参考上面`日志服务名和项目名映射关系表`；子模块入口表格里的推荐查询只是通过代码锚点校验后的首查模板，不是唯一真相。
 - 执行入口表格推荐查询前，先校验 `方法入口`、`serviceName` 和固定 `message` 片段是否仍能和当前代码匹配；可用 `scripts/validate_query_anchors.py` 辅助检查。
 - 标识符值优先直接放入 `message:\"{value}\"`，禁止加 `cid:`、`orderId:`、`contractNo:`
-- 日志查询 SQL 中如果包含中文，优先走 `scripts/cls_query.py --method api/auto`，API 路径直接传原始查询语句，不受 `queryBase64` 限制。只有浏览器 fallback URL 需要 ASCII `url_query`；必要时再读取 `references/common/cls-react-contenteditable-injection.md` 做页面注入。
+- 日志查询 SQL 中如果包含中文，优先走 `scripts/log_cls_query.py --method api/auto`，API 路径直接传原始查询语句，不受 `queryBase64` 限制。只有浏览器 fallback URL 需要 ASCII `url_query`；必要时再读取 `references/common/cls-react-contenteditable-injection.md` 做页面注入。
 - **分页未加载完** — CLS 每页只显示 20 条，`load_more_clicks` 是否足够？检查 `log_count` 字段
 - 日志平台查询常用 key 见下文"查询语法与字段"段。
 
@@ -180,10 +180,10 @@ SQL 构造顺序：
 
 ### API、内置浏览器和本地浏览器优先级
 
-- 优先用 `scripts/cls_query.py --method auto`。默认先请求 CLS 内部 HTTP API，不需要浏览器、不需要 `secret_id/secret_key`，查询中可直接包含中文。
+- 优先用 `scripts/log_cls_query.py --method auto`。默认先请求 CLS 内部 HTTP API，不需要浏览器、不需要 `secret_id/secret_key`，查询中可直接包含中文。
 - API 返回 `source=api_failed` 或 `is_complete=false` 时，按统计分档规则或非统计完整性风险决定下一步；需要页面 fallback 时，使用输出中的 `cls_url` 交给 WorkBuddy 内置浏览器打开。URL 必须包含 `topic_id`、`time`、`queryBase64`，避免依赖页面默认状态。
-- 本地 Chrome + AppleScript 是最后备用路径：当 WorkBuddy 登录态不可用、页面操作失败、需要脚本自动加载更多或批量全文提取时，显式使用 `scripts/cls_query.py --method local-chrome --use-local-chrome`。
-- 使用本地 Chrome 备用路径时，禁止默认操作 `active tab of front window`。首次查询创建新的 Chrome window，后续查询复用该窗口，通过 window id 定向操作；调查结束后调用 `scripts/cls_query.py --close` 关闭窗口。
+- 本地 Chrome + AppleScript 是最后备用路径：当 WorkBuddy 登录态不可用、页面操作失败、需要脚本自动加载更多或批量全文提取时，显式使用 `scripts/log_cls_query.py --method local-chrome --use-local-chrome`。
+- 使用本地 Chrome 备用路径时，禁止默认操作 `active tab of front window`。首次查询创建新的 Chrome window，后续查询复用该窗口，通过 window id 定向操作；调查结束后调用 `scripts/log_cls_query.py --close` 关闭窗口。
 - 不要用 `document.body.innerText.substring(0,N)` 判断结果；CLS 日志数据在页面文本后部。
 - `traceId` 查询也可能超过 20 条；必须加载全部数据进行解析
 - **分析前必须校验完整性**：统计模式下见上方"⛔ 数据统计强制约束"。非统计模式下：对比 `log_count` 与 `loaded_count`，若 `is_complete` 为 false 或 `loaded_count` 远小于 `log_count`，在"风险提示:"字段标注"基于 N/M 条采样分析，结论可能不完整"。
@@ -350,10 +350,10 @@ python3 ${WORKBUDDY_SKILL_DIR}/scripts/source_inspect.py --project order --file 
 
 ### 默认：API 优先查询
 
-`cls_query.py` 默认 `--method auto`：先走 CLS HTTP API（无需浏览器/`secret_id`，查询可含中文，默认最多拉 500 条用于探测和小数据精确统计），API 失败或无法确认完整时返回 `fallback_method: "workbuddy"` 和完整 `cls_url`。只有显式 `--method local-chrome` 或 `--use-local-chrome` 才打开本地 Chrome。
+`log_cls_query.py` 默认 `--method auto`：先走 CLS HTTP API（无需浏览器/`secret_id`，查询可含中文，默认最多拉 500 条用于探测和小数据精确统计），API 失败或无法确认完整时返回 `fallback_method: "workbuddy"` 和完整 `cls_url`。只有显式 `--method local-chrome` 或 `--use-local-chrome` 才打开本地 Chrome。
 
 ```bash
-python3 ${WORKBUDDY_SKILL_DIR}/scripts/cls_query.py \
+python3 ${WORKBUDDY_SKILL_DIR}/scripts/log_cls_query.py \
   --env prod \
   --query 'serviceName:"order" AND message:"20161002000002677537"'
 ```
@@ -362,7 +362,7 @@ API 成功输出 JSON 关键字段：`source`、`logs`（结构化日志数组�
 
 ### 备用路径与参数
 
-API 不可用或需要页面操作时按下表切换；完整参数见 `cls_query.py --help`。
+API 不可用或需要页面操作时按下表切换；完整参数见 `log_cls_query.py --help`。
 
 | 场景 | 关键参数 | 说明 |
 |------|----------|------|

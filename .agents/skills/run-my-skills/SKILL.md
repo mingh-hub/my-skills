@@ -26,7 +26,7 @@ Runs six `xh-log-lookup` CLI help checks, a shared-config import, a CLS URL-only
 ### CLS query — URL build only (no browser)
 
 ```bash
-python3 xh-smart/xh-log-lookup/scripts/cls_query.py \
+python3 xh-smart/xh-log-lookup/scripts/log_cls_query.py \
   --env prod \
   --query 'serviceName:"order" AND message:"20161002000002677537"' \
   --method workbuddy
@@ -37,7 +37,7 @@ Returns JSON with `cls_url`, `expanded_url`, `topic_id`. No side effects.
 ### CLS query — open Chrome and extract page text
 
 ```bash
-python3 xh-smart/xh-log-lookup/scripts/cls_query.py \
+python3 xh-smart/xh-log-lookup/scripts/log_cls_query.py \
   --env prod \
   --query 'traceId:"37426d42fdc699d1"' \
   --method local-chrome --use-local-chrome \

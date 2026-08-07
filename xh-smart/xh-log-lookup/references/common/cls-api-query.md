@@ -2,7 +2,7 @@
 
 ## When To Use
 
-Use `scripts/cls_query.py --method auto` for normal CLS lookups. It tries the internal HTTP API first and only falls back to browser paths when the API is unavailable or cannot prove completeness.
+Use `scripts/log_cls_query.py --method auto` for normal CLS lookups. It tries the internal HTTP API first and only falls back to browser paths when the API is unavailable or cannot prove completeness.
 
 ## Endpoint
 
