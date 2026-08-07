@@ -45,13 +45,25 @@ class DocumentContractsTest(unittest.TestCase):
         frontmatter = self.skill_text.split("---", 2)[1]
         allowed = set(
             re.findall(
-                r"Bash\(python3 \$\{WORKBUDDY_SKILL_DIR\}/scripts/([^ )]+\.py)",
+                r"Bash\(python3 \$\{HERMES_SKILL_DIR\}/scripts/([^ )]+\.py)",
                 frontmatter,
             )
         )
         self.assertEqual(allowed, PUBLIC_CLIS)
+        self.assertNotIn("${" + "WORKBUDDY_SKILL_DIR}", self.skill_text)
         for name in allowed:
             self.assertTrue((SKILL_ROOT / "scripts" / name).is_file(), name)
+
+    def test_skill_documents_use_hermes_skill_directory_template(self):
+        legacy_token = "${" + "WORKBUDDY_SKILL_DIR}"
+        documents = [SKILL_FILE, *sorted((SKILL_ROOT / "references").rglob("*"))]
+        for path in documents:
+            if path.is_file() and path.suffix in {".md", ".js"}:
+                self.assertNotIn(
+                    legacy_token,
+                    path.read_text(encoding="utf-8"),
+                    str(path),
+                )
 
     def test_references_named_by_skill_exist(self):
         references = set(

@@ -200,9 +200,9 @@ def lark_run(args):
 
 def load_env_files():
     for env_path in (
+        "~/.hermes/.env",
         "~/Desktop/feishu/.env",
         "~/.workbuddy/.env",
-        "~/.hermes/.env",
         "~/.lark/.env",
     ):
         resolved = os.path.expanduser(env_path)

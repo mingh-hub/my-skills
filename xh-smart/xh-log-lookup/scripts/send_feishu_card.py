@@ -367,7 +367,7 @@ def build_parser():
         "--allow-home-channel-fallback",
         action="store_true",
         help=(
-            "来源反查失败时允许兜底发送到 WORKBUDDY_HOME_CHANNEL_CHAT_ID；"
+            "来源反查失败时允许兜底发送到兼容变量 WORKBUDDY_HOME_CHANNEL_CHAT_ID；"
             "默认关闭，仅供无来源上下文的批量/定时调用显式开启"
         ),
     )

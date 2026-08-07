@@ -781,7 +781,7 @@ def resolve_send_target_model(
                 "source_error": source_meta.get("error", "no_match"),
                 "warning": (
                     "未搜索到可用的群聊 @Bot 或私聊 p2p 来源消息，无法确定发送目标；"
-                    "降级为纯文本结论，由 WorkBuddy 回复通道送达发起人"
+                    "降级为纯文本结论，由宿主 Agent 回复通道送达发起人"
                 ),
                 "search_strategy": source_meta.get("search_strategy"),
                 "matched_count": source_meta.get("matched_count", 0),
@@ -810,7 +810,7 @@ def resolve_send_target_model(
             "status": "error",
             "error": "missing_chat",
             "message": (
-                "缺少发送目标：请传 --chat，或由 WorkBuddy 注入 "
+                "缺少发送目标：请传 --chat，或由宿主 Agent 注入 "
                 "FEISHU_CURRENT_CHAT_ID / AGENT_CURRENT_CHAT_ID，"
                 "或显式使用 --resolve-chat --source-query，"
                 "或配置 WORKBUDDY_HOME_CHANNEL_CHAT_ID 并显式传 "

@@ -6,6 +6,7 @@ import os
 import shlex
 import socket
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -80,6 +81,53 @@ class OapiRuntimeTest(unittest.TestCase):
             credentials = send_feishu_card._load_env_credentials()
 
         self.assertEqual(credentials, ("file-id", "file-secret"))
+
+    def test_load_env_files_prefers_hermes_file_over_legacy_workbuddy_file(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            paths = {
+                "~/.hermes/.env": root / "hermes.env",
+                "~/Desktop/feishu/.env": root / "desktop.env",
+                "~/.workbuddy/.env": root / "workbuddy.env",
+                "~/.lark/.env": root / "lark.env",
+            }
+            values = {
+                "hermes.env": ("hermes-id", "hermes-secret"),
+                "desktop.env": ("desktop-id", "desktop-secret"),
+                "workbuddy.env": ("workbuddy-id", "workbuddy-secret"),
+                "lark.env": ("lark-id", "lark-secret"),
+            }
+            for path in paths.values():
+                app_id, app_secret = values[path.name]
+                path.write_text(
+                    f"FEISHU_APP_ID={app_id}\nFEISHU_APP_SECRET={app_secret}\n",
+                    encoding="utf-8",
+                )
+
+            with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(
+                os.path,
+                "expanduser",
+                side_effect=lambda path: str(paths[path]),
+            ):
+                send_feishu_card.load_env()
+                self.assertEqual(os.environ["FEISHU_APP_ID"], "hermes-id")
+                self.assertEqual(os.environ["FEISHU_APP_SECRET"], "hermes-secret")
+
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "FEISHU_APP_ID": "explicit-id",
+                    "FEISHU_APP_SECRET": "explicit-secret",
+                },
+                clear=True,
+            ), mock.patch.object(
+                os.path,
+                "expanduser",
+                side_effect=lambda path: str(paths[path]),
+            ):
+                send_feishu_card.load_env()
+                self.assertEqual(os.environ["FEISHU_APP_ID"], "explicit-id")
+                self.assertEqual(os.environ["FEISHU_APP_SECRET"], "explicit-secret")
 
     def test_lark_oapi_client_builds_once(self):
         builder = mock.Mock()

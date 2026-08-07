@@ -218,7 +218,7 @@ https://datasight-1300455117.internal.clsconsole.tencent-cloud.com/cls/search?re
 正确做法：
 
 - 按钮 URL 的 `queryBase64` 使用 ASCII 查询，例如 `serviceName:"order" AND message:"{标识符}"`
-- 真实中文条件不要进入 `queryBase64`；优先从 WorkBuddy 页面全文或本地 Chrome 备用路径提取的全文里二次过滤
+- 真实中文条件不要进入 `queryBase64`；优先从宿主 Agent 页面全文或本地 Chrome 备用路径提取的全文里二次过滤
 - 详细规则见 `chinese-queryBase64-experiments.md` 和 `cls-react-contenteditable-injection.md`
 
 ## 7. 历史降级 Markdown

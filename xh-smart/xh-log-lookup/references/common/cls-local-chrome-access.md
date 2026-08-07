@@ -2,7 +2,7 @@
 
 ## 何时读取
 
-当 WorkBuddy 内置浏览器登录态不可用、页面操作失败、需要脚本自动加载更多/批量全文提取，或需要手写 AppleScript 诊断 CLS 页面时读取。常规查询优先使用 WorkBuddy 内置浏览器直接打开 CLS URL。
+当宿主 Agent 浏览器登录态不可用、页面操作失败、需要脚本自动加载更多/批量全文提取，或需要手写 AppleScript 诊断 CLS 页面时读取。常规查询优先使用宿主 Agent 浏览器直接打开 CLS URL。
 
 ## 目录
 
@@ -16,7 +16,7 @@
 
 ## 场景
 
-- WorkBuddy 内置浏览器登录态不可用或页面操作失败
+- 宿主 Agent 浏览器登录态不可用或页面操作失败
 - 查询含中文（queryBase64 不支持中文）
 - 需要脚本自动加载更多、批量全文提取或本地 DOM 诊断
 
@@ -173,7 +173,7 @@ osascript /tmp/script.applescript
 调查结束并输出最终文本结论后，关闭 CLS 窗口避免累积：
 
 ```bash
-python3 ${WORKBUDDY_SKILL_DIR}/scripts/log_cls_query.py --close
+python3 ${HERMES_SKILL_DIR}/scripts/log_cls_query.py --close
 ```
 
 ## 备用方案：直接 URL 查询（纯 ASCII）

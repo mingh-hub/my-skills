@@ -8,14 +8,14 @@
 
 1. 用代码或业务模块 reference 确认日志关键词。
 2. 构造包含 `topic_id`、`time`、`queryBase64` 的完整 CLS URL。
-3. 优先用 WorkBuddy 内置浏览器直接打开 CLS URL，避免依赖 UI 默认状态。
+3. 优先用宿主 Agent 浏览器直接打开 CLS URL，避免依赖 UI 默认状态。
 4. 在页面中点击“加载更多”直到满足完整性要求，再提取完整页面文本。
-5. 当 WorkBuddy 页面操作失败、登录态不可用、或需要批量自动提取时，改用 `scripts/log_cls_query.py` 作为本地 Chrome 备用路径。
+5. 当宿主 Agent 页面操作失败、登录态不可用、或需要批量自动提取时，改用 `scripts/log_cls_query.py` 作为本地 Chrome 备用路径。
 
 示例：
 
 ```bash
-python3 ${WORKBUDDY_SKILL_DIR}/scripts/log_cls_query.py \
+python3 ${HERMES_SKILL_DIR}/scripts/log_cls_query.py \
   --env prod \
   --time 'now-30d,now' \
   --query 'traceId:"37426d42fdc699d1"' \

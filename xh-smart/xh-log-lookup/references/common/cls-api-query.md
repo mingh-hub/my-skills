@@ -53,5 +53,5 @@ If the response has a total count field, compare it with loaded results. If no t
 
 - `source=api` and `is_complete=true`: analyze API results directly.
 - `source=api` and `is_complete=false`: non-statistical analysis may use the sample with a yellow completeness warning; statistical analysis must fall back.
-- `source=api_failed`: use returned `cls_url` in WorkBuddy.
+- `source=api_failed`: use the returned `cls_url` in the host agent browser. The historical `fallback_method: "workbuddy"` value remains for compatibility.
 - Local Chrome is only the final fallback: `--method local-chrome --use-local-chrome`.

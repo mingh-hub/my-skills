@@ -2,7 +2,7 @@
 """CLS query helper for xh-log-lookup.
 
 Queries CLS through the internal HTTP API by default. Browser paths are
-fallbacks: WorkBuddy URL first, then local Chrome only when explicitly selected.
+fallbacks: host-agent URL first, then local Chrome only when explicitly selected.
 """
 
 import argparse
@@ -607,7 +607,7 @@ def incomplete_text_result(result: dict) -> dict:
         "suggested_actions": [
             "缩小 --time 范围并拆分查询",
             "添加额外过滤条件（如 AND level:\"ERROR\"）减少结果集",
-            "使用 WorkBuddy 完整加载，或显式切换本地 Chrome 备用路径",
+            "使用宿主 Agent 浏览器完整加载，或显式切换本地 Chrome 备用路径",
         ],
         "PROHIBITION": (
             "本次查询使用了 --require-complete，但数据未完整或完整性未知。"
@@ -625,7 +625,7 @@ def main() -> int:
         "--method",
         choices=("auto", "api", "workbuddy", "local-chrome"),
         default="auto",
-        help="Query method. auto tries API first, then returns WorkBuddy fallback URLs.",
+        help="Query method. auto tries API first, then returns host-agent fallback URLs.",
     )
     parser.add_argument("--env", choices=sorted(TOPICS), default="prod")
     parser.add_argument("--time", dest="time_range")
@@ -649,7 +649,7 @@ def main() -> int:
     parser.add_argument(
         "--no-browser",
         action="store_true",
-        help="Only build WorkBuddy URLs; retained for compatibility.",
+        help="Only build URL fallback payloads; the historical workbuddy method is retained for compatibility.",
     )
     parser.add_argument(
         "--require-complete",
@@ -779,7 +779,7 @@ def main() -> int:
                         "error": "INCOMPLETE_DATA",
                         "error_message": (
                             "[FATAL] API 数据不完整，禁止统计分析。"
-                            "请使用 WorkBuddy 内置浏览器完整加载，或显式切换本地 Chrome 备用路径。"
+                            "请使用宿主 Agent 浏览器完整加载，或显式切换本地 Chrome 备用路径。"
                         ),
                         "action_required": "FALLBACK_TO_WORKBUDDY",
                         "PROHIBITION": (

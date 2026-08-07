@@ -63,7 +63,7 @@ class LocalBusinessLogicModeTest(unittest.TestCase):
     def test_allowed_tools_include_source_inspect(self):
         text = self.read_skill()
         self.assertIn(
-            "Bash(python3 ${WORKBUDDY_SKILL_DIR}/scripts/source_inspect.py *)",
+            "Bash(python3 ${HERMES_SKILL_DIR}/scripts/source_inspect.py *)",
             text,
         )
 
