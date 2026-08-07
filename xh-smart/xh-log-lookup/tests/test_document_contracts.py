@@ -14,7 +14,7 @@ FEISHU_CARD_TEMPLATE_FILE = (
     SKILL_ROOT / "references" / "common" / "feishu-card-template.md"
 )
 PUBLIC_CLIS = {
-    "log_cls_query.py",
+    "cls_log_query.py",
     "resolve_hermes_session.py",
     "resolve_workspace.py",
     "send_feishu_card.py",

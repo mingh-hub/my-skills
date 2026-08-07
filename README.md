@@ -10,7 +10,7 @@ my-skills/
     xh-log-lookup/              # 日志与业务逻辑分析主控 skill
       SKILL.md                  # 模式选择、服务映射、业务路由和输出约束
       scripts/                  # Python CLI 工具
-        log_cls_query.py            # CLS API / WorkBuddy URL / 本地 Chrome 备用查询
+        cls_log_query.py            # CLS API / WorkBuddy URL / 本地 Chrome 备用查询
         resolve_workspace.py    # 按项目名自动定位本地源码仓库
         source_inspect.py       # 受限的只读源码状态、搜索和片段读取
         send_feishu_card.py     # 飞书卡片薄 CLI 入口和兼容导出
@@ -74,7 +74,7 @@ my-skills/
 - **服务范围**：先判断业务意图，再识别服务范围；业务链路查询优先于服务别名扩范围，只有明确问服务异常、服务健康或服务组情况时才按“具体 `serviceName` → 表中别名对应服务组 → 客户订单组全表服务”扩展。
 - **业务路由**：借款首页、首页无额度、借款内容页、预检、借款能力校验、试算、借款失败和申请前轨迹默认走 `references/modules/apply.md`；明确下单、订单生成、下单拦截、反欺诈或下单成功/失败统计时走 `references/modules/order.md`。
 - **SQL 条件下沉**：查询前必须把环境、时间、标识符、业务锚点、服务和日志级别等可确定条件拼进 CLS SQL；除非用户明确要求原始日志、全部日志或随机采样，禁止先宽查裸服务范围再从返回样本里筛 `ERROR`、`WARN` 或业务结果。
-- **统计模式**：先用 `log_cls_query.py --method auto --api-limit 500` 探测；`<=500` 默认精确，`500-1000` 按用户意图选择精确或采样，`>1000` 默认采样；采样统计必须写明“采样统计，非精确统计”。异常/健康检查默认先单查 `level:"ERROR"`，再单查 `level:"WARN"`，必要时继续按服务、业务锚点或时间窗口拆分。
+- **统计模式**：先用 `cls_log_query.py --method auto --api-limit 500` 探测；`<=500` 默认精确，`500-1000` 按用户意图选择精确或采样，`>1000` 默认采样；采样统计必须写明“采样统计，非精确统计”。异常/健康检查默认先单查 `level:"ERROR"`，再单查 `level:"WARN"`，必要时继续按服务、业务锚点或时间窗口拆分。
 - **来源反查**：飞书卡片默认用用户原始问题 + 最近 15 分钟窗口反查群聊 `@Tom` 或私聊 p2p 来源；`--source-query` 必须传触发技能的原始问题，不能传摘要、卡片标题或改写后的问题。
 - **`@Tom` 候选池兜底**：完整原始问题搜索 0 命中时，`send_feishu_card.py` 会搜索最近窗口内最多 50 条 `@Tom` 群聊候选，仍校验 `mentions` 包含 Tom/BOT_OPEN_ID，再按原始问题相似度选择来源；低相似度、并列或无有效候选时才进入现有 fallback。
 - **WorkBuddy 直问兜底**：反查不到来源时默认降级为当前会话纯文本；只有显式传 `--allow-home-channel-fallback` 且配置 `WORKBUDDY_HOME_CHANNEL_CHAT_ID` 时，才允许发送到 home channel 私聊。
@@ -86,7 +86,7 @@ my-skills/
 
 | 工具 | 路径 | 说明 |
 | ---- | ---- | ---- |
-| `log_cls_query.py` | `xh-smart/xh-log-lookup/scripts/` | 优先通过 CLS HTTP API 查询日志；默认 `--api-limit 500`，用于统计探测和小数据精确统计；必要时输出 WorkBuddy fallback URL，显式选择时才用本地 Chrome/AppleScript |
+| `cls_log_query.py` | `xh-smart/xh-log-lookup/scripts/` | 优先通过 CLS HTTP API 查询日志；默认 `--api-limit 500`，用于统计探测和小数据精确统计；必要时输出 WorkBuddy fallback URL，显式选择时才用本地 Chrome/AppleScript |
 | `resolve_workspace.py` | `xh-smart/xh-log-lookup/scripts/` | 按 `XH_WORKSPACE_ROOTS` 和项目名自动定位本地源码仓库，并可更新 `SKILL.md` 服务映射表中的本地路径 |
 | `source_inspect.py` | `xh-smart/xh-log-lookup/scripts/` | 只允许访问 `SKILL.md` 映射项目；支持 `--status` 查看分支/commit/dirty、`--search` 搜索源码与配置、`--file` 读取仓库内相对路径片段；拒绝越界、隐藏/构建目录及指向不允许位置的符号链接，搜索最多 200 条，单次读取最多 400 行，不执行任何仓库更新或文件写入 |
 | `send_feishu_card.py` | `xh-smart/xh-log-lookup/scripts/` | 飞书卡片薄 CLI 入口；`feishu_card.py` 负责 schema/渲染/28KB 适配，`feishu_routing.py` 负责来源选择和审计，`feishu_transport.py` 负责 OAPI/CLI 发送与 ID 转换；入口保留原参数、JSON 和常用 Python 导出 |
@@ -137,7 +137,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover \
 
 当前单元测试覆盖：
 
-- `log_cls_query.py` 的输入优先级、完整性状态、参数校验、API 错误体和日志级别解析
+- `cls_log_query.py` 的输入优先级、完整性状态、参数校验、API 错误体和日志级别解析
 - `SKILL.md` 的本地业务逻辑触发、三模式选择、自动升级、纯源码禁用 CLS 和修改类任务排除
 - 服务映射 round-trip、工作区只读解析、原子更新、锚点 verified/unverified/strict 行为
 - `source_inspect.py` 的项目映射限制、`rg --fixed-strings` 快速路径、纯 Python fallback 和路径/数量边界

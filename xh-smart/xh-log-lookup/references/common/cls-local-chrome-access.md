@@ -28,7 +28,7 @@
 
 ### 1. 创建或复用 CLS 窗口
 
-不要操作 `front window`。先复用已打开的 CLS/Argus 窗口；找不到时创建新窗口，并记录 window id。调查结束后用 `log_cls_query.py --close` 关闭：
+不要操作 `front window`。先复用已打开的 CLS/Argus 窗口；找不到时创建新窗口，并记录 window id。调查结束后用 `cls_log_query.py --close` 关闭：
 
 ```bash
 CLS_WINDOW_ID=$(osascript <<'APPLESCRIPT'
@@ -173,7 +173,7 @@ osascript /tmp/script.applescript
 调查结束并输出最终文本结论后，关闭 CLS 窗口避免累积：
 
 ```bash
-python3 ${HERMES_SKILL_DIR}/scripts/log_cls_query.py --close
+python3 ${HERMES_SKILL_DIR}/scripts/cls_log_query.py --close
 ```
 
 ## 备用方案：直接 URL 查询（纯 ASCII）

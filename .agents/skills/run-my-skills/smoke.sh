@@ -47,7 +47,7 @@ echo ""
 echo "[2/4] xh-log-lookup offline CLI checks"
 
 CLI_NAMES=(
-  log_cls_query.py
+  cls_log_query.py
   resolve_hermes_session.py
   resolve_workspace.py
   send_feishu_card.py
@@ -71,8 +71,8 @@ module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 '
 
-run_check_output "log_cls_query.py WorkBuddy URL-only" '"source": "workbuddy"' \
-  env PYTHONDONTWRITEBYTECODE=1 python3 "$LOG_LOOKUP_ROOT/scripts/log_cls_query.py" \
+run_check_output "cls_log_query.py WorkBuddy URL-only" '"source": "workbuddy"' \
+  env PYTHONDONTWRITEBYTECODE=1 python3 "$LOG_LOOKUP_ROOT/scripts/cls_log_query.py" \
     --env prod --query 'serviceName:"order"' --method workbuddy
 
 run_check_output "anchors are advisory without source" '"verification_status"' \

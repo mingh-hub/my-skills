@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest import mock
 
 
-SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "log_cls_query.py"
+SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "cls_log_query.py"
 
 
 def load_module():
@@ -38,7 +38,7 @@ class ClsQueryBehaviorTest(unittest.TestCase):
                 sys,
                 "argv",
                 [
-                    "log_cls_query.py",
+                    "cls_log_query.py",
                     "--query",
                     'serviceName:"order"',
                     "--input-text",
@@ -67,7 +67,7 @@ class ClsQueryBehaviorTest(unittest.TestCase):
                 sys,
                 "argv",
                 [
-                    "log_cls_query.py",
+                    "cls_log_query.py",
                     "--query",
                     'serviceName:"order"',
                     "--input-text",
@@ -97,7 +97,7 @@ class ClsQueryBehaviorTest(unittest.TestCase):
                 sys,
                 "argv",
                 [
-                    "log_cls_query.py",
+                    "cls_log_query.py",
                     "--query",
                     'serviceName:"order"',
                     "--input-text",
@@ -132,7 +132,7 @@ class ClsQueryBehaviorTest(unittest.TestCase):
         ), mock.patch.object(
             sys,
             "argv",
-            ["log_cls_query.py", "--query", '*', "--method", "api"],
+            ["cls_log_query.py", "--query", '*', "--method", "api"],
         ), redirect_stdout(output):
             exit_code = module.main()
 
@@ -157,7 +157,7 @@ class ClsQueryBehaviorTest(unittest.TestCase):
                 sys,
                 "argv",
                 [
-                    "log_cls_query.py",
+                    "cls_log_query.py",
                     "--query",
                     'serviceName:"order"',
                     "--input-text",
@@ -208,7 +208,7 @@ class ClsQueryBehaviorTest(unittest.TestCase):
         with mock.patch.object(
             sys,
             "argv",
-            ["log_cls_query.py", "--query", "*", "--method", "workbuddy", "--api-limit", "0"],
+            ["cls_log_query.py", "--query", "*", "--method", "workbuddy", "--api-limit", "0"],
         ), redirect_stdout(output):
             exit_code = module.main()
         payload = json.loads(output.getvalue())
@@ -232,7 +232,7 @@ class ClsQueryBehaviorTest(unittest.TestCase):
                     sys,
                     "argv",
                     [
-                        "log_cls_query.py",
+                        "cls_log_query.py",
                         "--query",
                         "*",
                         "--method",
@@ -254,7 +254,7 @@ class ClsQueryBehaviorTest(unittest.TestCase):
         with mock.patch.object(
             sys,
             "argv",
-            ["log_cls_query.py", "--query", query, "--method", "workbuddy"],
+            ["cls_log_query.py", "--query", query, "--method", "workbuddy"],
         ), redirect_stdout(output):
             exit_code = module.main()
 

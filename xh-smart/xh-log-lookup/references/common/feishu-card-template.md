@@ -12,7 +12,7 @@
 
 ## 何时读取
 
-当前 `xh-log-lookup` 主流程优先通过 `scripts/send_feishu_card.py --quiet-success` 发送飞书卡片，发送成功后静默或只做极短确认；发送失败、来源缺失或候选详情获取失败时才降级为飞书兼容文本结论。需要 CLS 链接时，可用 `log_cls_query.py` 输出的 `cls_url` / `expanded_url`。
+当前 `xh-log-lookup` 主流程优先通过 `scripts/send_feishu_card.py --quiet-success` 发送飞书卡片，发送成功后静默或只做极短确认；发送失败、来源缺失或候选详情获取失败时才降级为飞书兼容文本结论。需要 CLS 链接时，可用 `cls_log_query.py` 输出的 `cls_url` / `expanded_url`。
 
 主流程见 `../SKILL.md`。本文作为卡片内容组织和历史模板参考。
 
