@@ -11,6 +11,7 @@ import argparse
 import json
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Iterable
 
@@ -112,7 +113,8 @@ def parse_anchor_rows(skill_path: Path) -> list[AnchorRow]:
     return rows
 
 
-def build_class_index(source_roots: Iterable[Path]) -> dict[str, list[Path]]:
+@lru_cache(maxsize=8)
+def _build_class_index_cached(source_roots: tuple[Path, ...]) -> dict[str, list[Path]]:
     index: dict[str, list[Path]] = {}
     for root in source_roots:
         if not root.exists():
@@ -122,10 +124,19 @@ def build_class_index(source_roots: Iterable[Path]) -> dict[str, list[Path]]:
     return index
 
 
+def build_class_index(source_roots: Iterable[Path]) -> dict[str, list[Path]]:
+    normalized = tuple(sorted(Path(root).expanduser().resolve() for root in source_roots))
+    return _build_class_index_cached(normalized)
+
+
 def parse_method_entry(method_entry: str) -> tuple[str | None, str | None, str | None]:
     entry = method_entry.strip()
     if not entry or entry in {"-", "—"} or entry.startswith("待代码确认"):
         return None, None, None
+
+    inline_code = re.search(r"`([^`]+)`", entry)
+    if inline_code:
+        entry = inline_code.group(1).strip()
 
     if "#" in entry:
         class_name, method = entry.split("#", 1)
@@ -192,16 +203,32 @@ def find_method_file(
 
     method_pattern = re.compile(rf"\b{re.escape(method)}\s*\(") if method else None
     for candidate in candidates:
-        text = candidate.read_text(encoding="utf-8", errors="ignore")
+        text = _read_source_text(candidate)
         if method_pattern is None or method_pattern.search(text):
             return candidate, "ok", "方法入口存在"
 
     return candidates[0], "warn", f"找到类 {simple_class}，但未找到方法 {method}"
 
 
-def validate_row(row: AnchorRow, class_index: dict[str, list[Path]]) -> dict[str, object]:
+@lru_cache(maxsize=None)
+def _read_source_text(path: Path) -> str:
+    return path.read_text(encoding="utf-8", errors="ignore")
+
+
+def validate_row(
+    row: AnchorRow,
+    class_index: dict[str, list[Path]],
+    source_available: bool = True,
+) -> dict[str, object]:
     class_name, simple_class, method = parse_method_entry(row.method_entry)
-    source_file, method_status, method_detail = find_method_file(class_index, simple_class, method)
+    if source_available:
+        source_file, method_status, method_detail = find_method_file(
+            class_index, simple_class, method
+        )
+    else:
+        source_file = None
+        method_status = "skip"
+        method_detail = "未配置或未解析到源码根目录"
 
     service_name = extract_service_name(row.query)
     expected_service = infer_expected_service(row.method_entry)
@@ -223,7 +250,7 @@ def validate_row(row: AnchorRow, class_index: dict[str, list[Path]]) -> dict[str
         message_status = "skip"
         missing_anchors = []
     else:
-        text = source_file.read_text(encoding="utf-8", errors="ignore")
+        text = _read_source_text(source_file)
         missing_anchors = [anchor for anchor in anchors if anchor not in text]
         message_status = "ok" if not missing_anchors else "warn"
 
@@ -240,10 +267,22 @@ def validate_row(row: AnchorRow, class_index: dict[str, list[Path]]) -> dict[str
         "message_anchors": anchors,
         "missing_message_anchors": missing_anchors,
         "suggested_fallback": suggest_fallback(row.query, row.method_entry),
+        "source_available": source_available,
+        "verification_status": (
+            "unverified"
+            if not source_available
+            else (
+                "warning"
+                if "warn" in (method_status, service_status, message_status)
+                else "verified"
+            )
+        ),
     }
 
 
 def overall_status(result: dict[str, object]) -> str:
+    if result.get("verification_status") == "unverified":
+        return "UNVERIFIED"
     statuses = [
         str(result["method_status"]),
         str(result["service_status"]),
@@ -305,7 +344,7 @@ def print_summary(results: list[dict[str, object]]) -> None:
     col_scene = max(len(str(r["scene"])) for r in results)
     col_scene = max(col_scene, 4)
 
-    header = f"{'模块':<{col_mod}}  {'场景':<{col_scene}}  有效"
+    header = f"{'模块':<{col_mod}}  {'场景':<{col_scene}}  状态"
     sep = "─" * (col_mod + col_scene + 8)
 
     print("=== 锚点有效性汇总 ===")
@@ -314,12 +353,19 @@ def print_summary(results: list[dict[str, object]]) -> None:
 
     ok_count = 0
     warn_count = 0
+    unverified_count = 0
     for r in results:
         status = overall_status(r)
         mod_name = display_module_name(Path(str(r["skill"])))
-        valid = "Y" if status != "WARN" else "N"
+        if status == "UNVERIFIED":
+            valid = "?"
+        else:
+            valid = "Y" if status != "WARN" else "N"
         line = f"{mod_name:<{col_mod}}  {str(r['scene']):<{col_scene}}  {valid}"
-        if valid == "N":
+        if valid == "?":
+            line += "  ← 未验证：未配置或未解析到源码根目录"
+            unverified_count += 1
+        elif valid == "N":
             line += f"  ← {warn_reason(r)}"
             warn_count += 1
         else:
@@ -327,7 +373,10 @@ def print_summary(results: list[dict[str, object]]) -> None:
         print(line)
 
     print(sep)
-    print(f"合计: {len(results)} 条 | 有效: {ok_count} | 无效: {warn_count}")
+    print(
+        f"合计: {len(results)} 条 | 有效: {ok_count} | "
+        f"告警: {warn_count} | 未验证: {unverified_count}"
+    )
 
 
 def main() -> int:
@@ -344,6 +393,11 @@ def main() -> int:
     )
     parser.add_argument("--json", action="store_true", help="Print JSON instead of text")
     parser.add_argument("--summary", action="store_true", help="Print concise summary table")
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Return non-zero when any row is unverified or has warnings.",
+    )
     args = parser.parse_args()
 
     if args.all:
@@ -355,13 +409,17 @@ def main() -> int:
         skill_paths = [Path(s) for s in args.skill]
 
     source_roots = args.source_root or [root for root in _default_source_roots() if root.exists()]
+    source_available = bool(source_roots)
     class_index = build_class_index(source_roots)
 
     rows: list[AnchorRow] = []
     for skill in skill_paths:
         rows.extend(parse_anchor_rows(skill))
 
-    results = [validate_row(row, class_index) for row in rows]
+    results = [
+        validate_row(row, class_index, source_available=source_available)
+        for row in rows
+    ]
     if args.json:
         print(json.dumps(results, ensure_ascii=False, indent=2))
     elif args.summary:
@@ -369,6 +427,10 @@ def main() -> int:
     else:
         print_text(results)
 
+    if args.strict and any(
+        overall_status(result) in {"WARN", "UNVERIFIED"} for result in results
+    ):
+        return 1
     return 0
 
 

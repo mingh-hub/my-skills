@@ -6,6 +6,7 @@ import os
 import shlex
 import socket
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -16,6 +17,10 @@ SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "send_feishu_car
 SPEC = importlib.util.spec_from_file_location("send_feishu_card_oapi", SCRIPT_PATH)
 send_feishu_card = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(send_feishu_card)
+
+
+def command_argv(command):
+    return shlex.split(command) if isinstance(command, str) else list(command)
 
 
 _NETWORK_PATCHER = mock.patch.object(
@@ -76,6 +81,53 @@ class OapiRuntimeTest(unittest.TestCase):
             credentials = send_feishu_card._load_env_credentials()
 
         self.assertEqual(credentials, ("file-id", "file-secret"))
+
+    def test_load_env_files_prefers_hermes_file_over_legacy_workbuddy_file(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            paths = {
+                "~/.hermes/.env": root / "hermes.env",
+                "~/Desktop/feishu/.env": root / "desktop.env",
+                "~/.workbuddy/.env": root / "workbuddy.env",
+                "~/.lark/.env": root / "lark.env",
+            }
+            values = {
+                "hermes.env": ("hermes-id", "hermes-secret"),
+                "desktop.env": ("desktop-id", "desktop-secret"),
+                "workbuddy.env": ("workbuddy-id", "workbuddy-secret"),
+                "lark.env": ("lark-id", "lark-secret"),
+            }
+            for path in paths.values():
+                app_id, app_secret = values[path.name]
+                path.write_text(
+                    f"FEISHU_APP_ID={app_id}\nFEISHU_APP_SECRET={app_secret}\n",
+                    encoding="utf-8",
+                )
+
+            with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(
+                os.path,
+                "expanduser",
+                side_effect=lambda path: str(paths[path]),
+            ):
+                send_feishu_card.load_env()
+                self.assertEqual(os.environ["FEISHU_APP_ID"], "hermes-id")
+                self.assertEqual(os.environ["FEISHU_APP_SECRET"], "hermes-secret")
+
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "FEISHU_APP_ID": "explicit-id",
+                    "FEISHU_APP_SECRET": "explicit-secret",
+                },
+                clear=True,
+            ), mock.patch.object(
+                os.path,
+                "expanduser",
+                side_effect=lambda path: str(paths[path]),
+            ):
+                send_feishu_card.load_env()
+                self.assertEqual(os.environ["FEISHU_APP_ID"], "explicit-id")
+                self.assertEqual(os.environ["FEISHU_APP_SECRET"], "explicit-secret")
 
     def test_lark_oapi_client_builds_once(self):
         builder = mock.Mock()
@@ -179,7 +231,8 @@ class OapiLookupTest(unittest.TestCase):
             result = send_feishu_card._to_open_id(uid)
 
         self.assertEqual(result, "ou_cli")
-        self.assertIn(shlex.quote(uid), cli.call_args.args[0])
+        argv = command_argv(cli.call_args.args[0])
+        self.assertEqual(argv[argv.index("--user-id") + 1], uid)
 
     def test_fetch_message_detail_uses_oapi_mapping_and_audit(self):
         item = SimpleNamespace(
@@ -270,7 +323,25 @@ class OapiLookupTest(unittest.TestCase):
 
         self.assertEqual(error, "")
         self.assertEqual(message["chat_id"], "oc_cli")
-        self.assertIn(shlex.quote(msg_id), cli.call_args.args[0])
+        argv = command_argv(cli.call_args.args[0])
+        self.assertEqual(argv[argv.index("--message-ids") + 1], msg_id)
+
+    def test_fetch_message_detail_cli_unavailable_returns_failure(self):
+        audit = SimpleNamespace(add_mget=mock.Mock())
+        with mock.patch.object(
+            send_feishu_card, "_lark_oapi_client", return_value=None
+        ), mock.patch.object(
+            send_feishu_card,
+            "_lark_run",
+            side_effect=FileNotFoundError("lark-cli unavailable"),
+        ):
+            message, error = send_feishu_card._fetch_message_detail(
+                "om_1", audit=audit, source="mixed"
+            )
+
+        self.assertIsNone(message)
+        self.assertIn("FileNotFoundError", error)
+        self.assertFalse(audit.add_mget.call_args.args[0]["ok"])
 
     def test_fetch_message_detail_missing_chat_type_falls_back_to_cli(self):
         item = SimpleNamespace(
@@ -711,7 +782,78 @@ class OapiSendTest(unittest.TestCase):
                 user_id=user_id,
             )
 
-        self.assertIn(shlex.quote(user_id), cli.call_args.args[0])
+        argv = command_argv(cli.call_args.args[0])
+        self.assertEqual(argv[argv.index("--user-id") + 1], user_id)
+
+    def test_send_card_audit_redacts_transport_credentials(self):
+        audit = SimpleNamespace(
+            set_send=mock.Mock(), flush=mock.Mock(return_value="/tmp/audit.json")
+        )
+        cli_response = SimpleNamespace(
+            stdout=json.dumps({"ok": True, "data": {"message_id": "om_cli"}}),
+            stderr="",
+        )
+        failure = (
+            "app_secret=secret-value "
+            "access_token=token-value Cookie=cookie-value"
+        )
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "FEISHU_APP_SECRET": "secret-value",
+                "FEISHU_ACCESS_TOKEN": "token-value",
+                "FEISHU_COOKIE": "cookie-value",
+            },
+            clear=False,
+        ), mock.patch.object(
+            send_feishu_card,
+            "_send_card_via_oapi",
+            return_value=(False, failure),
+        ), mock.patch.object(
+            send_feishu_card, "_lark_run", return_value=cli_response
+        ):
+            send_feishu_card.send_card(
+                "oc_target",
+                {"schema": "2.0", "body": {"elements": []}},
+                "--chat-id",
+                quiet_success=True,
+                audit=audit,
+            )
+
+        recorded = json.dumps(audit.set_send.call_args.kwargs, ensure_ascii=False)
+        self.assertNotIn("secret-value", recorded)
+        self.assertNotIn("token-value", recorded)
+        self.assertNotIn("cookie-value", recorded)
+        self.assertIn("<redacted_credential>", recorded)
+
+    def test_send_card_cli_transport_failure_is_mapped_and_audited(self):
+        audit = SimpleNamespace(
+            set_send=mock.Mock(), flush=mock.Mock(return_value="/tmp/audit.json")
+        )
+        with mock.patch.object(
+            send_feishu_card,
+            "_send_card_via_oapi",
+            return_value=(False, "sdk unavailable"),
+        ), mock.patch.object(
+            send_feishu_card,
+            "_lark_run",
+            side_effect=FileNotFoundError("do not expose command payload"),
+        ):
+            with self.assertRaises(send_feishu_card.TransportError) as raised:
+                send_feishu_card.send_card(
+                    "oc_target",
+                    {"schema": "2.0", "body": {"elements": []}},
+                    "--chat-id",
+                    audit=audit,
+                )
+
+        self.assertEqual(raised.exception.output["status"], "error")
+        self.assertEqual(raised.exception.output["detail"], "lark-cli is unavailable")
+        self.assertEqual(
+            audit.set_send.call_args.kwargs["transport_failure_reason"],
+            "lark_cli_unavailable",
+        )
 
 
 if __name__ == "__main__":

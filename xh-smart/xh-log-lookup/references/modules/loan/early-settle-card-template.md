@@ -91,7 +91,7 @@ thor-app-gateway (env)
 ## `send_feishu_card.py` 调用示例
 
 ```bash
-python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py \
+python3 ${HERMES_SKILL_DIR}/scripts/send_feishu_card.py \
   --resolve-chat --source-query "{用户原始问题}" \
   --resolve-window-minutes 15 \
   --at-sender \

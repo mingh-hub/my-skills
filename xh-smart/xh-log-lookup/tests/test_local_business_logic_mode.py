@@ -31,7 +31,7 @@ class LocalBusinessLogicModeTest(unittest.TestCase):
         local_section = text.split("### `local_logic`", 1)[1].split("### `log_diagnosis`", 1)[0]
 
         self.assertIn("source_inspect.py", local_section)
-        self.assertIn("禁止调用 `cls_query.py`", local_section)
+        self.assertIn("禁止调用 `cls_log_query.py`", local_section)
         self.assertIn("--content-mode business-logic", local_section)
 
     def test_log_diagnosis_upgrades_to_combined_when_evidence_is_insufficient(self):
@@ -63,7 +63,7 @@ class LocalBusinessLogicModeTest(unittest.TestCase):
     def test_allowed_tools_include_source_inspect(self):
         text = self.read_skill()
         self.assertIn(
-            "Bash(python3 ${WORKBUDDY_SKILL_DIR}/scripts/source_inspect.py *)",
+            "Bash(python3 ${HERMES_SKILL_DIR}/scripts/source_inspect.py *)",
             text,
         )
 

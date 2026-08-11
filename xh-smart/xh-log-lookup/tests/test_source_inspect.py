@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import importlib.util
+import json
 import subprocess
 import tempfile
 import unittest
@@ -130,6 +131,49 @@ class SourceInspectTest(unittest.TestCase):
         self.assertEqual(match["line"], 3)
         self.assertIn("before", match["before"][0]["text"])
         self.assertIn("after", match["after"][0]["text"])
+
+    def test_rg_fast_path_uses_fixed_strings_and_argv(self):
+        source_inspect = self.load_module()
+        event = {
+            "type": "match",
+            "data": {
+                "path": {"text": str(self.source_file)},
+                "line_number": 3,
+            },
+        }
+        completed = subprocess.CompletedProcess(
+            args=["rg"], returncode=0, stdout=json.dumps(event) + "\n", stderr=""
+        )
+        with mock.patch.object(
+            source_inspect.shutil, "which", return_value="/usr/bin/rg"
+        ), mock.patch.object(
+            source_inspect.subprocess, "run", return_value=completed
+        ) as run:
+            result = source_inspect.search_source(
+                "demo",
+                "LoanServiceImpl",
+                context=1,
+                max_results=50,
+                project_paths={"demo": self.repo},
+            )
+
+        command = run.call_args.args[0]
+        self.assertIn("--fixed-strings", command)
+        self.assertIn("--no-follow", command)
+        self.assertEqual(command[-2], "LoanServiceImpl")
+        self.assertEqual(result["match_count"], 1)
+
+    def test_search_falls_back_when_rg_is_unavailable(self):
+        source_inspect = self.load_module()
+        with mock.patch.object(source_inspect.shutil, "which", return_value=None):
+            result = source_inspect.search_source(
+                "demo",
+                "LoanServiceImpl",
+                context=0,
+                max_results=50,
+                project_paths={"demo": self.repo},
+            )
+        self.assertEqual(result["matches"][0]["line"], 3)
 
     def test_search_does_not_follow_symlink_outside_repository(self):
         source_inspect = self.load_module()

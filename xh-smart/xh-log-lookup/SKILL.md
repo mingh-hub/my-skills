@@ -2,12 +2,12 @@
 name: xh-log-lookup
 description: 当用户需要查询生产或测试环境 CLS/Argus 日志、定位借款/下单/签约/权益/Hold单/解H/放款/还款/债转问题，使用 traceId/orderId/cid/contractNo/mobile/idNo 排查，或基于本地源码梳理业务流程、调用链、条件分支、字段语义时使用。
 allowed-tools:
-  - Bash(python3 ${WORKBUDDY_SKILL_DIR}/scripts/cls_query.py *)
-  - Bash(python3 ${WORKBUDDY_SKILL_DIR}/scripts/validate_query_anchors.py *)
-  - Bash(python3 ${WORKBUDDY_SKILL_DIR}/scripts/resolve_workspace.py *)
-  - Bash(python3 ${WORKBUDDY_SKILL_DIR}/scripts/source_inspect.py *)
-  - Bash(python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py *)
-  - Bash(python3 ${WORKBUDDY_SKILL_DIR}/scripts/resolve_hermes_session.py *)
+  - Bash(python3 ${HERMES_SKILL_DIR}/scripts/cls_log_query.py *)
+  - Bash(python3 ${HERMES_SKILL_DIR}/scripts/validate_query_anchors.py *)
+  - Bash(python3 ${HERMES_SKILL_DIR}/scripts/resolve_workspace.py *)
+  - Bash(python3 ${HERMES_SKILL_DIR}/scripts/source_inspect.py *)
+  - Bash(python3 ${HERMES_SKILL_DIR}/scripts/send_feishu_card.py *)
+  - Bash(python3 ${HERMES_SKILL_DIR}/scripts/resolve_hermes_session.py *)
   - Bash(LARK_CLI_NO_PROXY=1 lark-cli im +messages-search *)
   - Bash(LARK_CLI_NO_PROXY=1 lark-cli im +messages-mget *)
   - Bash(LARK_CLI_NO_PROXY=1 lark-cli im +messages-send *)
@@ -57,10 +57,10 @@ disable: false
 
 ### 触发前提与来源约束
 
-- 本技能只处理已由 WorkBuddy/Claw 触发的请求：私聊 Tom，或群聊中明确 `@Tom` / 被判定为对 Tom 的直接提及。
+- 本技能只处理已由宿主 Agent（Hermes、WorkBuddy 或 Claw）触发的请求：私聊 Tom，或群聊中明确 `@Tom` / 被判定为对 Tom 的直接提及。
 - 如果运行上下文显示这是群聊消息且未直接提及 Tom，应立即停止；不要查询 CLS、不要读取本地代码、不要发送飞书卡片，也不要输出诊断结论。
 - 私聊 Tom 时不需要 `@Tom`，直接按本技能流程处理，并优先把飞书卡片发送回该私聊会话。
-- 触发后，发送目标优先是当前提问来源；反查阶梯全部跑完仍无法确认来源时，默认降级为当前会话纯文本 fallback（由 WorkBuddy 回复通道送达发起人），不再自动堆到 `WORKBUDDY_HOME_CHANNEL_CHAT_ID`（该静态兜底仅在显式传 `--allow-home-channel-fallback` 时启用）。
+- 触发后，发送目标优先是当前提问来源；反查阶梯全部跑完仍无法确认来源时，默认降级为当前会话纯文本 fallback（由宿主 Agent 回复通道送达发起人），不再自动堆到 `WORKBUDDY_HOME_CHANNEL_CHAT_ID`（该静态兜底仅在显式传 `--allow-home-channel-fallback` 时启用）。
 
 ### 分析模式选择
 
@@ -79,7 +79,7 @@ disable: false
 - 先执行 `source_inspect.py --project {项目名} --status`，记录仓库、当前分支、Commit 和工作区状态；未指定分支时读取当前本地分支及未提交工作区内容，不 fetch、不 pull、不 checkout。
 - 用户明确指定分支但当前分支不一致时，停止源码分析并请用户自行切换或确认使用当前分支；本技能不得代为切换。
 - 用 `--search` 定位类、方法、字段、MQ/RPC 调用和条件分支，再用 `--file --start-line --end-line` 读取必要片段。禁止凭 reference 内容冒充当前源码结论。
-- **禁止调用 `cls_query.py`**。用户明确不查日志时，不得因结论不完整而擅自升级到日志查询。
+- **禁止调用 `cls_log_query.py`**。用户明确不查日志时，不得因结论不完整而擅自升级到日志查询。
 - 源码路径失效时先执行 `resolve_workspace.py --check`；无法唯一定位时停止分析，发送阻塞说明，不得猜测业务逻辑。
 - 最终调用 `send_feishu_card.py --content-mode business-logic`。`summary_fields` 必须包含：业务模块、仓库、分支、Commit、工作区状态、分析范围；`table_data` 至少包含“步骤 / 类或方法 / 关键逻辑”；`analysis` 写核心结论、外部依赖、未确认项和源码依据。
 
@@ -103,13 +103,13 @@ disable: false
 
 **触发条件**：用户意图含 `统计`、`汇总`、`占比`、`成功率`、`总数`、`计数`、`分布`、`趋势`、`健康检查`、`有多少`、`多少笔`、`有几条`、`总共`、`一共`、`百分比`、`比例`、`平均`、`最多`、`最少` 任一关键词时，自动进入**统计模式**。健康检查（业务模块 reference 的 Step 0-4）**始终**属于统计模式。
 
-**先探测**：统计模式先执行 `cls_query.py --method auto --api-limit 500`，读取 `log_count/loaded_count/is_complete/has_more/fallback_method`。禁止在未说明完整性状态时输出统计结论。
+**先探测**：统计模式先执行 `cls_log_query.py --method auto --api-limit 500`，读取 `log_count/loaded_count/is_complete/has_more/fallback_method`。禁止在未说明完整性状态时输出统计结论。
 
 **按规模分档**：
 
 | 探测结果 | 默认口径 | 精确补齐方式 |
 |----------|----------|--------------|
-| `is_complete=true` 或 `log_count<=500` | 精确统计 | API 未完整但 `<=500` 时，WorkBuddy 完整加载或拆分查询补齐 |
+| `is_complete=true` 或 `log_count<=500` | 精确统计 | API 未完整但 `<=500` 时，宿主 Agent 浏览器完整加载或拆分查询补齐 |
 | `500 < log_count <= 1000` | 按意图：精确口径（总数/成功率/占比/准确数量）走完整加载；趋势/分布/整体异常可采样 | `--require-complete` 或拆分查询 |
 | `log_count>1000`、`has_more=true` 无法低成本补齐、或完整性未知 | 采样统计 | 用户要精确时拆分时间/服务/level，或请用户缩小范围 |
 
@@ -136,7 +136,7 @@ disable: false
 - 分析要查的数据是否在子模块的流程追踪入口，是的话可以通过日志锚点查询，不是的话分析本地项目路径，确认查询`sql`,服务名参考上面`日志服务名和项目名映射关系表`；子模块入口表格里的推荐查询只是通过代码锚点校验后的首查模板，不是唯一真相。
 - 执行入口表格推荐查询前，先校验 `方法入口`、`serviceName` 和固定 `message` 片段是否仍能和当前代码匹配；可用 `scripts/validate_query_anchors.py` 辅助检查。
 - 标识符值优先直接放入 `message:\"{value}\"`，禁止加 `cid:`、`orderId:`、`contractNo:`
-- 日志查询 SQL 中如果包含中文，优先走 `scripts/cls_query.py --method api/auto`，API 路径直接传原始查询语句，不受 `queryBase64` 限制。只有浏览器 fallback URL 需要 ASCII `url_query`；必要时再读取 `references/common/cls-react-contenteditable-injection.md` 做页面注入。
+- 日志查询 SQL 中如果包含中文，优先走 `scripts/cls_log_query.py --method api/auto`，API 路径直接传原始查询语句，不受 `queryBase64` 限制。只有浏览器 fallback URL 需要 ASCII `url_query`；必要时再读取 `references/common/cls-react-contenteditable-injection.md` 做页面注入。
 - **分页未加载完** — CLS 每页只显示 20 条，`load_more_clicks` 是否足够？检查 `log_count` 字段
 - 日志平台查询常用 key 见下文"查询语法与字段"段。
 
@@ -167,6 +167,7 @@ SQL 构造顺序：
 - 方法存在但固定 message 不匹配时，不要把旧模板当主路径；改用 `serviceName:\"{服务}\" AND message:\"{标识符}\"`，并 grep 当前代码找新日志前缀。
 - 方法不存在、源码缺失或服务不匹配时，标记模板疑似过期；先按 traceId/标识符值搜，再回代码确认入口。
 - 推荐查询 0 命中时，继续扩大时间做值搜；如果能搜到日志，说明查询语法可用但目标时间段无命中；扩大到当前时间前一个月仍无日志时，停止扩大时间，回本地项目确认日志是否已下线、模板是否过期或入口是否变更。
+- 无可用源码根目录时，`validate_query_anchors.py` 将该行标为 `verification_status=unverified`，不得计入有效或无效；默认校验为 advisory，只有显式 `--strict` 才因 unverified 或告警返回非零。
  
 ### 日志查询无结果排查清单
 
@@ -179,10 +180,10 @@ SQL 构造顺序：
 
 ### API、内置浏览器和本地浏览器优先级
 
-- 优先用 `scripts/cls_query.py --method auto`。默认先请求 CLS 内部 HTTP API，不需要浏览器、不需要 `secret_id/secret_key`，查询中可直接包含中文。
-- API 返回 `source=api_failed` 或 `is_complete=false` 时，按统计分档规则或非统计完整性风险决定下一步；需要页面 fallback 时，使用输出中的 `cls_url` 交给 WorkBuddy 内置浏览器打开。URL 必须包含 `topic_id`、`time`、`queryBase64`，避免依赖页面默认状态。
-- 本地 Chrome + AppleScript 是最后备用路径：当 WorkBuddy 登录态不可用、页面操作失败、需要脚本自动加载更多或批量全文提取时，显式使用 `scripts/cls_query.py --method local-chrome --use-local-chrome`。
-- 使用本地 Chrome 备用路径时，禁止默认操作 `active tab of front window`。首次查询创建新的 Chrome window，后续查询复用该窗口，通过 window id 定向操作；调查结束后调用 `scripts/cls_query.py --close` 关闭窗口。
+- 优先用 `scripts/cls_log_query.py --method auto`。默认先请求 CLS 内部 HTTP API，不需要浏览器、不需要 `secret_id/secret_key`，查询中可直接包含中文。
+- API 返回 `source=api_failed` 或 `is_complete=false` 时，按统计分档规则或非统计完整性风险决定下一步；需要页面 fallback 时，使用输出中的 `cls_url` 交给宿主 Agent 浏览器打开。`fallback_method: "workbuddy"` 是历史兼容字段，不代表必须运行 WorkBuddy。URL 必须包含 `topic_id`、`time`、`queryBase64`，避免依赖页面默认状态。
+- 本地 Chrome + AppleScript 是最后备用路径：当宿主 Agent 浏览器登录态不可用、页面操作失败、需要脚本自动加载更多或批量全文提取时，显式使用 `scripts/cls_log_query.py --method local-chrome --use-local-chrome`。
+- 使用本地 Chrome 备用路径时，禁止默认操作 `active tab of front window`。首次查询创建新的 Chrome window，后续查询复用该窗口，通过 window id 定向操作；调查结束后调用 `scripts/cls_log_query.py --close` 关闭窗口。
 - 不要用 `document.body.innerText.substring(0,N)` 判断结果；CLS 日志数据在页面文本后部。
 - `traceId` 查询也可能超过 20 条；必须加载全部数据进行解析
 - **分析前必须校验完整性**：统计模式下见上方"⛔ 数据统计强制约束"。非统计模式下：对比 `log_count` 与 `loaded_count`，若 `is_complete` 为 false 或 `loaded_count` 远小于 `log_count`，在"风险提示:"字段标注"基于 N/M 条采样分析，结论可能不完整"。
@@ -209,6 +210,11 @@ SQL 构造顺序：
 - `log` 卡片或纯文本必须包含：日志前缀、CLS 查询语句/topic/时间范围、命中摘要与未命中证据、完整性状态（`loaded_count` vs `log_count`）、关键节点时间、CLS URL、卡片发送状态。
 - `business-logic` 卡片或纯文本必须包含：业务模块、仓库、分支、Commit、工作区状态、分析范围、源码文件与行号、核心调用链、条件分支、外部依赖、未确认项、卡片发送状态；不要求任何 CLS 字段。
 - `combined` 必须同时满足上述源码证据与日志证据要求，并明确哪些结论来自源码、哪些由日志验证。
+- **业务敏感信息明文契约（卡片与纯文本 fallback 同等适用）**：
+  - 手机号、银行卡号、身份证号、姓名等业务排查信息必须按查询结果原文输出；禁止主动替换为星号、部分隐藏值、摘要、哈希或密文。
+  - 数据源本身已脱敏或加密时，保留数据源返回的原文，不猜测、拼接或跨日志还原完整值，并在 `analysis` 或风险提示中注明“数据源已脱敏/加密，无法确认完整值”。
+  - `FEISHU_APP_SECRET`、访问 Token、Cookie 等认证秘密禁止进入卡片或纯文本 fallback；路由和传输审计继续不记录原始查询文本或凭据。
+  - 28KB 卡片容量适配只允许按 UTF-8 合法截断并保留截断提示，不得用掩码替代容量截断。
 
 ### 来源识别与飞书卡片发送
 
@@ -218,12 +224,12 @@ SQL 构造顺序：
 >
 > **反例（禁止）**：结论分析完成后，认为"问题简单/已查清/直接答复更快"，**不调脚本就把诊断文本发给用户**——即使内容正确，也按交付失败处理。"是否发卡"不由结论复杂度决定，只由本流程决定。
 
-**发送通道（2026-08-05 起双通道）**：`send_feishu_card.py` 的卡片发送、用户 ID 转换和消息详情读取优先使用 `lark_oapi` bot SDK；进程环境中的 `FEISHU_APP_ID` / `FEISHU_APP_SECRET` 优先，缺失时读取 `~/.hermes/.env`。SDK、凭据或请求不可用时自动降级到现有 lark-cli，`--resolve-chat` 使用的 `messages-search` 仍只走 lark-cli。仅 CLI 启动且当前解释器无法导入 SDK 时，脚本才尝试用 Hermes venv Python 重新执行，模块导入不会触发重启。OAPI 发送成功会在普通 stdout 和路由审计中记录 `"transport":"lark_oapi"`；`--quiet-success` 继续抑制成功 stdout，不改变退出码语义。
+**发送通道（2026-08-05 起双通道）**：`send_feishu_card.py` 的卡片发送、用户 ID 转换和消息详情读取优先使用 `lark_oapi` bot SDK；进程环境中的 `FEISHU_APP_ID` / `FEISHU_APP_SECRET` 优先，缺失时读取 `~/.hermes/.env`。SDK、凭据或请求不可用时自动降级到现有 lark-cli，`--resolve-chat` 使用的 `messages-search` 仍只走 lark-cli。SDK、凭据和 lark-cli 都只在实际传输需要时惰性解析；模块导入和 `--help` 不查找 CLI、不重启解释器。OAPI 发送成功会在普通 stdout 和路由审计中记录 `"transport":"lark_oapi"`；`--quiet-success` 继续抑制成功 stdout，不改变退出码语义。
 
 技能被触发后，在输出最终结论前执行以下流程：
 
 1. **必须先调用发送脚本**：最终结论生成后，先执行 `send_feishu_card.py --quiet-success`。不要先输出普通文本结论；只有发送脚本返回非 0 或明确失败状态时，才输出纯文本 fallback。
-2. **来源优先级**：Hermes 直传（`resolve_hermes_session.py` → `--user-id`/`--chat-id`）> `--chat`（人工显式指定）> `--resolve-chat --source-query "{用户原始问题}"` 反查选定的 `chat_id` > `FEISHU_CURRENT_CHAT_ID` / `AGENT_CURRENT_CHAT_ID`（host 若注入的当前会话）> 纯文本 fallback。反查成功时环境变量不能覆盖或短路结果。`WORKBUDDY_HOME_CHANNEL_CHAT_ID` **不再自动兜底**——他人私聊反查不到时若堆到这里会全部误发运维者 DM，仅在显式传 `--allow-home-channel-fallback`（供无来源上下文的批量/定时调用）时才用。WorkBuddy 正常路径必须用 `--resolve-chat`。
+2. **来源优先级**：Hermes 直传（`resolve_hermes_session.py` → `--user-id`/`--chat-id`）> `--chat`（人工显式指定）> `--resolve-chat --source-query "{用户原始问题}"` 反查选定的 `chat_id` > `FEISHU_CURRENT_CHAT_ID` / `AGENT_CURRENT_CHAT_ID`（host 若注入的当前会话）> 纯文本 fallback。反查成功时环境变量不能覆盖或短路结果。`WORKBUDDY_HOME_CHANNEL_CHAT_ID` **不再自动兜底**——他人私聊反查不到时若堆到这里会全部误发运维者 DM，仅在显式传 `--allow-home-channel-fallback`（供无来源上下文的批量/定时调用）时才用。非 Hermes 宿主的正常路径必须用 `--resolve-chat`。
 3. **`--source-query` 取值约束**：必须是触发技能的原始用户消息原文；禁止传分析摘要、关键切片、卡片标题或改写后的问题。
 4. **来源安全**：群聊只能选 @Tom 的消息作为发送目标；未 @Tom 的同文本群消息只能作为噪声过滤。退化搜索（`@Tom` 候选池 + 相似度选择）仍必须通过群聊 @Tom 校验，不能绕过该规则。
 
@@ -232,7 +238,7 @@ SQL 构造顺序：
 **Hermes 环境**：先执行 helper 并读取 JSON；退出码 2、私聊 `open_id` 为空或输出无法解析时，改走下方反查模板。
 
 ```bash
-python3 ${WORKBUDDY_SKILL_DIR}/scripts/resolve_hermes_session.py --resolve-open-id
+python3 ${HERMES_SKILL_DIR}/scripts/resolve_hermes_session.py --resolve-open-id
 ```
 
 - `chat_type=dm`：把 `open_id` 传给 `--user-id`，并固定 `--chat-type p2p`，私聊不加 `--at-sender`。
@@ -240,14 +246,14 @@ python3 ${WORKBUDDY_SKILL_DIR}/scripts/resolve_hermes_session.py --resolve-open-
 
 ```bash
 # 私聊直发
-python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py \
+python3 ${HERMES_SKILL_DIR}/scripts/send_feishu_card.py \
   --user-id "ou_xxx" --chat-type p2p \
   --debug-log-dir "/private/tmp/xh-log-lookup-route" \
   --quiet-success --content-mode "{log|business-logic|combined}" \
   --title "..." --color "..." --data "..."
 
 # 群聊直发并 @ 提问者
-python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py \
+python3 ${HERMES_SKILL_DIR}/scripts/send_feishu_card.py \
   --chat-id "oc_xxx" --chat-type group \
   --sender-open-id "{ou_xxx|租户 user_id}" --sender-id-type user_id \
   --debug-log-dir "/private/tmp/xh-log-lookup-route" \
@@ -255,10 +261,10 @@ python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py \
   --title "..." --color "..." --data "..."
 ```
 
-**WorkBuddy、非 Hermes 或 Hermes helper 降级**：使用消息原文反查。
+**非 Hermes 或 Hermes helper 降级**：使用消息原文反查。
 
 ```bash
-python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py \
+python3 ${HERMES_SKILL_DIR}/scripts/send_feishu_card.py \
   --resolve-chat --source-query "{用户原始问题}" \
   --resolve-window-minutes 15 \
   --debug-log-dir "/private/tmp/xh-log-lookup-route" \
@@ -270,7 +276,7 @@ python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py \
 退出码语义（行为护栏，不可违反）：
 
 - 退出码 0 → 视为卡片已发送，当前会话**不得**再输出诊断结论、摘要、证据、CLS 链接或卡片内容；宿主强制要求非空回复时，只输出 `已发送飞书卡片。`。
-- 退出码非 0 或 `status: "unresolved"` → 当前会话输出飞书兼容纯文本结论。`error=missing_private_target`（退出码 2）是**私聊来源无法反查时的正常降级**（`--as user` 搜不到他人 p2p），不是配置缺失：直接输出纯文本结论，由 WorkBuddy 回复通道送达发起人，无需提示配置 `WORKBUDDY_HOME_CHANNEL_CHAT_ID`。其余退出码非 0 情形按失败降级并说明原因。
+- 退出码非 0 或 `status: "unresolved"` → 当前会话输出飞书兼容纯文本结论。`error=missing_private_target`（退出码 2）是**私聊来源无法反查时的正常降级**（`--as user` 搜不到他人 p2p），不是配置缺失：直接输出纯文本结论，由宿主 Agent 回复通道送达发起人，无需提示配置 `WORKBUDDY_HOME_CHANNEL_CHAT_ID`。其余退出码非 0 情形按失败降级并说明原因。
 - 最终结论已用普通文本输出但本轮无 `send_feishu_card.py` 调用记录 → 视为违反输出规则。
 
 **发送前自检（每轮必须逐条确认，缺一即停下补做，不得跳过）**：
@@ -314,41 +320,26 @@ python3 ${WORKBUDDY_SKILL_DIR}/scripts/send_feishu_card.py \
 
 匹配不到业务模块时，先问用户确认。
 
-## 标准工作流
+## 工作流索引
 
-### 纯源码 `local_logic`
+强制步骤只在上文维护，避免模式说明与执行流程漂移：
 
-1. 识别业务模块并读取对应 module reference，只提取待验证的类、方法、字段和业务节点。
-2. 用 `source_inspect.py --status` 记录仓库上下文；用 `--search` 和 `--file` 回源码确认完整调用链、判断条件和外部依赖。
-3. 对照 reference 与当前源码；有冲突时以当前源码为准，并在未确认项中说明 reference 可能过期。
-4. 组装业务逻辑卡片，执行「来源识别与飞书卡片发送」，使用 `--content-mode business-logic`。本流程任何步骤都不得调用 CLS。
+| 模式 | 执行入口 | 交付模式 |
+|------|----------|----------|
+| `local_logic` | 「分析模式选择」→「local_logic」→「本地源码工具」 | `business-logic`；禁止 CLS |
+| `log_diagnosis` | 「log_diagnosis」→「数据统计/SQL/锚点/无结果/API 优先级」 | `log`；证据不足自动升级 |
+| `combined` | 「combined」同时应用源码与全部日志强制规则 | `combined`；区分源码预期与日志证据 |
 
-### 日志 `log_diagnosis`
-
-1. 提取环境、时间范围、标识符和业务意图；按“标识符 → 业务链路 → 服务健康 → 服务别名范围”确认查询目标，再路由到业务模块 reference 或服务组范围。
-2. 按“SQL 条件下沉强制约束”先组装完整 CLS 查询；条件不明确时按“模块 reference 锚点 → 本地代码日志 → 保守兜底查询”顺序收窄，禁止宽查后筛。
-3. 判断是否为统计模式。是 → `cls_query.py --method auto --api-limit 500` 先探测；按 `log_count/is_complete/has_more` 决定精确统计或采样统计。
-4. 非统计模式默认 `cls_query.py --method auto`。API 不可用或结果不完整时，用返回的 `cls_url` 交给 WorkBuddy 内置浏览器；必要时再显式切换本地 Chrome 备用路径。
-5. 0 命中时按“无结果排查清单”回退；命中但无法支持确定结论时，自动升级 `combined`。
-6. 日志证据充分时用 `--content-mode log` 发卡。仅使用本地 Chrome 备用窗口时，最后调用 `cls_query.py --close` 关窗口。
-
-### 联合 `combined`
-
-1. 按 `local_logic` 步骤读取源码，得到预期入口、调用顺序、条件分支、关键字段和日志锚点。
-2. 按 `log_diagnosis` 规则查询实际日志，用日志验证请求实际经过、跳过或失败的节点。
-3. 结论分为“源码预期”“日志证据”“联合判断”“阻塞/未确认项”，禁止把源码可能路径写成日志已证实事实。
-4. 使用 `--content-mode combined` 发卡；发送规则和失败降级与其他模式一致。
-
-无论哪种模式，**结论只能通过飞书卡片正常交付**：发卡成功后当前会话静默或只输出 `已发送飞书卡片。`；只有脚本返回非 0/失败时才 fallback 为当前会话纯文本。
+所有模式统一执行「来源识别与飞书卡片发送」；发送失败后才允许使用纯文本 fallback。业务细节和查询锚点只从对应 module reference 读取，CLS、源码和卡片实现细节按 `references/common/` 的索引按需读取。
 
 ## 本地源码工具
 
 `source_inspect.py` 只允许读取映射表中的仓库，不执行 fetch、pull、checkout、stash 或文件写入。完整参数以 `--help` 为准。
 
 ```bash
-python3 ${WORKBUDDY_SKILL_DIR}/scripts/source_inspect.py --project order --status
-python3 ${WORKBUDDY_SKILL_DIR}/scripts/source_inspect.py --project order --search "LoanServiceImpl" --context 3 --max-results 50
-python3 ${WORKBUDDY_SKILL_DIR}/scripts/source_inspect.py --project order --file "path/to/File.java" --start-line 120 --end-line 260
+python3 ${HERMES_SKILL_DIR}/scripts/source_inspect.py --project order --status
+python3 ${HERMES_SKILL_DIR}/scripts/source_inspect.py --project order --search "LoanServiceImpl" --context 3 --max-results 50
+python3 ${HERMES_SKILL_DIR}/scripts/source_inspect.py --project order --file "path/to/File.java" --start-line 120 --end-line 260
 ```
 
 - `--status`：返回仓库路径、当前分支、HEAD commit、dirty 状态和变更文件。
@@ -359,10 +350,10 @@ python3 ${WORKBUDDY_SKILL_DIR}/scripts/source_inspect.py --project order --file 
 
 ### 默认：API 优先查询
 
-`cls_query.py` 默认 `--method auto`：先走 CLS HTTP API（无需浏览器/`secret_id`，查询可含中文，默认最多拉 500 条用于探测和小数据精确统计），API 失败或无法确认完整时返回 `fallback_method: "workbuddy"` 和完整 `cls_url`。只有显式 `--method local-chrome` 或 `--use-local-chrome` 才打开本地 Chrome。
+`cls_log_query.py` 默认 `--method auto`：先走 CLS HTTP API（无需浏览器/`secret_id`，查询可含中文，默认最多拉 500 条用于探测和小数据精确统计），API 失败或无法确认完整时返回历史兼容字段 `fallback_method: "workbuddy"` 和完整 `cls_url`，由当前宿主 Agent 浏览器打开。只有显式 `--method local-chrome` 或 `--use-local-chrome` 才打开本地 Chrome。
 
 ```bash
-python3 ${WORKBUDDY_SKILL_DIR}/scripts/cls_query.py \
+python3 ${HERMES_SKILL_DIR}/scripts/cls_log_query.py \
   --env prod \
   --query 'serviceName:"order" AND message:"20161002000002677537"'
 ```
@@ -371,12 +362,12 @@ API 成功输出 JSON 关键字段：`source`、`logs`（结构化日志数组�
 
 ### 备用路径与参数
 
-API 不可用或需要页面操作时按下表切换；完整参数见 `cls_query.py --help`。
+API 不可用或需要页面操作时按下表切换；完整参数见 `cls_log_query.py --help`。
 
 | 场景 | 关键参数 | 说明 |
 |------|----------|------|
-| URL fallback 不开浏览器 | `--method workbuddy`（`--no-browser` 兼容转入） | 仅构造 `cls_url`/`expanded_url` 交 WorkBuddy 内置浏览器 |
-| 本地 Chrome 提取全文 | `--method local-chrome --use-local-chrome --output /tmp/cls_output.txt` | WorkBuddy 不可用、需脚本自动加载更多或批量提取时;输出含 `cls_url`/`expanded_url`/`output_path`/`completeness_ratio`/`services`/`contracts` |
+| URL fallback 不开浏览器 | `--method workbuddy`（`--no-browser` 兼容转入） | 仅构造 `cls_url`/`expanded_url` 交当前宿主 Agent 浏览器 |
+| 本地 Chrome 提取全文 | `--method local-chrome --use-local-chrome --output /tmp/cls_output.txt` | 宿主 Agent 浏览器不可用、需脚本自动加载更多或批量提取时;输出含 `cls_url`/`expanded_url`/`output_path`/`completeness_ratio`/`services`/`contracts` |
 | 本地 Chrome 精确统计 | 上一行再加 `--require-complete` | 强制完整数据，自动加载最多 200 次;仍不完整返回 `error: INCOMPLETE_DATA` 和拆分建议，此时禁止输出精确统计 |
 | 关闭备用窗口 | `--close` | 仅用本地 Chrome 备用路径时，调查结束后关窗口 |
 | 校验入口表锚点 | `validate_query_anchors.py --all --summary` | 自动发现 `references/modules/*.md`;校验不通过时推荐查询只能作历史线索 |

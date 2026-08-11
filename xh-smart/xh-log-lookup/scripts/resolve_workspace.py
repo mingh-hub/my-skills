@@ -12,16 +12,17 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 from skill_config import (
     SKILL_ROOT,
+    is_trusted_repo,
     parse_mapping_table,
     render_mapping_table,
 )
 
 SKILL_MD = SKILL_ROOT / "SKILL.md"
-REPO_MARKERS = (".git", "pom.xml", "build.gradle", "settings.gradle", "package.json")
 
 
 def _dedupe_paths(paths: list[Path]) -> list[Path]:
@@ -54,7 +55,7 @@ def _infer_search_dirs(rows: list[dict[str, str]]) -> list[Path]:
 
 
 def _is_trusted_repo(path: Path) -> bool:
-    return path.is_dir() and any((path / marker).exists() for marker in REPO_MARKERS)
+    return is_trusted_repo(path)
 
 
 def _find_candidates(project_name: str, roots: list[Path]) -> list[Path]:
@@ -122,7 +123,24 @@ def update_skill_md(rows: list[dict[str, str]]) -> None:
 
     new_table = render_mapping_table(rows) + "\n"
     new_text = "".join(lines[:table_start]) + new_table + "".join(lines[table_end:])
-    SKILL_MD.write_text(new_text, encoding="utf-8")
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=SKILL_MD.parent,
+            prefix=f".{SKILL_MD.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temp_file:
+            temp_file.write(new_text)
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+            temp_path = Path(temp_file.name)
+        os.replace(temp_path, SKILL_MD)
+    finally:
+        if temp_path is not None and temp_path.exists():
+            temp_path.unlink()
 
 
 def cmd_resolve(rows: list[dict[str, str]], dry_run: bool) -> int:
@@ -170,8 +188,8 @@ def cmd_resolve(rows: list[dict[str, str]], dry_run: bool) -> int:
 
 def cmd_set_project(rows: list[dict[str, str]], project: str, path: str) -> int:
     resolved = str(Path(path).expanduser().resolve())
-    if not Path(resolved).is_dir():
-        print(f"ERROR: '{resolved}' is not a directory")
+    if not _is_trusted_repo(Path(resolved)):
+        print(f"ERROR: '{resolved}' is not a trusted source repository")
         return 1
 
     found = False

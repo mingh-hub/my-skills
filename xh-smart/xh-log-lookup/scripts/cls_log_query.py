@@ -2,7 +2,7 @@
 """CLS query helper for xh-log-lookup.
 
 Queries CLS through the internal HTTP API by default. Browser paths are
-fallbacks: WorkBuddy URL first, then local Chrome only when explicitly selected.
+fallbacks: host-agent URL first, then local Chrome only when explicitly selected.
 """
 
 import argparse
@@ -243,8 +243,13 @@ def load_more(window_id: str, max_clicks: int, delay: float) -> tuple[int, bool]
 
 
 def parse_log_count(text: str) -> int:
+    count = parse_reported_log_count(text)
+    return count if count is not None else 0
+
+
+def parse_reported_log_count(text: str) -> Optional[int]:
     match = re.search(r"日志条数\s*([\d,]+)", text)
-    return int(match.group(1).replace(",", "")) if match else 0
+    return int(match.group(1).replace(",", "")) if match else None
 
 
 def count_loaded_logs(text: str) -> int:
@@ -373,9 +378,22 @@ def _extract_level(log_json: object, message: str) -> str:
     return "INFO"
 
 
-def parse_api_response(response: dict, api_limit: int) -> tuple[list[dict], int, bool, bool]:
+def parse_api_response(
+    response: dict, api_limit: int
+) -> tuple[list[dict], int, bool, Optional[bool]]:
+    if not isinstance(response, dict):
+        raise RuntimeError("CLS API returned a non-object response")
     response_data = response.get("Response", {})
+    if not isinstance(response_data, dict):
+        raise RuntimeError("CLS API response is missing Response object")
+    error = response_data.get("Error")
+    if isinstance(error, dict):
+        code = str(error.get("Code", "CLS_API_ERROR"))
+        message = str(error.get("Message", "unknown error"))
+        raise RuntimeError(f"{code}: {message}")
     results = response_data.get("Results", [])
+    if not isinstance(results, list):
+        raise RuntimeError("CLS API Response.Results must be a list")
     logs = []
 
     for item in results:
@@ -410,7 +428,7 @@ def parse_api_response(response: dict, api_limit: int) -> tuple[list[dict], int,
         logs.append(log_entry)
 
     total_count, total_count_available = _pick_total_count(response_data, len(logs))
-    is_complete = total_count <= len(logs) if total_count_available else len(logs) < api_limit
+    is_complete = total_count <= len(logs) if total_count_available else None
     return logs, total_count, total_count_available, is_complete
 
 
@@ -428,7 +446,7 @@ def query_cls_api(
     time_range: str,
     api_limit: int,
     timeout: int,
-) -> tuple[list[dict], int, bool, bool]:
+) -> tuple[list[dict], int, bool, Optional[bool]]:
     from_ts, to_ts = parse_time_range_for_api(time_range)
     payload = {
         "service": "cls",
@@ -492,6 +510,112 @@ def build_base_result(
     }
 
 
+def validate_cli_arguments(args, time_range: str, expanded_time: str) -> list[str]:
+    errors = []
+    positive = (
+        ("api-limit", args.api_limit),
+        ("api-timeout", args.api_timeout),
+    )
+    non_negative = (
+        ("max-load-more", args.max_load_more),
+        ("delay", args.delay),
+        ("wait", args.wait),
+    )
+    for name, value in positive:
+        if value <= 0:
+            errors.append(f"--{name} must be > 0")
+    for name, value in non_negative:
+        if value < 0:
+            errors.append(f"--{name} must be >= 0")
+    for name, value in (("time", time_range), ("expanded-time", expanded_time)):
+        try:
+            parse_time_range_for_api(value)
+        except ValueError as exc:
+            errors.append(f"--{name}: {exc}")
+    return errors
+
+
+def text_completeness(
+    text: str,
+    loaded_count: int,
+    browser_has_more: Optional[bool] = None,
+) -> tuple[Optional[int], Optional[bool], Optional[bool], Optional[float]]:
+    reported_count = parse_reported_log_count(text)
+    if browser_has_more is True:
+        ratio = (
+            round(loaded_count / max(reported_count, 1), 3)
+            if reported_count is not None
+            else None
+        )
+        return reported_count, True, False, ratio
+    if reported_count is not None:
+        is_complete = loaded_count >= reported_count
+        ratio = round(loaded_count / max(reported_count, 1), 3)
+        return reported_count, not is_complete, is_complete, ratio
+    if browser_has_more is False:
+        return loaded_count, False, True, 1.0
+    return None, None, None, None
+
+
+def build_text_result(
+    base_result: dict,
+    text: str,
+    source: str,
+    output_path: Optional[str],
+    window_id: Optional[str] = None,
+    load_more_clicks: int = 0,
+    browser_has_more: Optional[bool] = None,
+) -> dict:
+    loaded_count = count_loaded_logs(text)
+    log_count, has_more, is_complete, completeness_ratio = text_completeness(
+        text, loaded_count, browser_has_more
+    )
+    return {
+        **base_result,
+        "source": source,
+        "fallback_method": None,
+        "output_path": output_path,
+        "window_id": window_id,
+        "load_more_clicks": load_more_clicks,
+        "log_count": log_count,
+        "loaded_count": loaded_count,
+        "has_more": has_more,
+        "is_complete": is_complete,
+        "completeness_ratio": completeness_ratio,
+        "services": parse_services(text),
+        "contracts": parse_contracts(text),
+    }
+
+
+def incomplete_text_result(result: dict) -> dict:
+    loaded_count = result.get("loaded_count") or 0
+    log_count = result.get("log_count")
+    known_total = log_count if isinstance(log_count, int) else None
+    if known_total is None:
+        detail = f"已加载 {loaded_count} 条，但页面文本未提供可验证的总数。"
+    else:
+        ratio = loaded_count * 100 // max(known_total, 1)
+        detail = f"已加载 {loaded_count}/{known_total} 条（{ratio}%）。"
+    return {
+        **result,
+        "error": "INCOMPLETE_DATA",
+        "error_message": (
+            "[FATAL] 数据完整性未确认，禁止统计分析。"
+            f"{detail}请缩小时间范围或拆分查询后重试。"
+        ),
+        "action_required": "SPLIT_AND_RETRY",
+        "suggested_actions": [
+            "缩小 --time 范围并拆分查询",
+            "添加额外过滤条件（如 AND level:\"ERROR\"）减少结果集",
+            "使用宿主 Agent 浏览器完整加载，或显式切换本地 Chrome 备用路径",
+        ],
+        "PROHIBITION": (
+            "本次查询使用了 --require-complete，但数据未完整或完整性未知。"
+            "严禁基于本次数据进行统计、计数、占比或汇总分析。"
+        ),
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Query CLS by API first; browser paths are fallbacks.")
     parser.add_argument("--query", help="CLS query used for execution. API mode supports Chinese.")
@@ -501,7 +625,7 @@ def main() -> int:
         "--method",
         choices=("auto", "api", "workbuddy", "local-chrome"),
         default="auto",
-        help="Query method. auto tries API first, then returns WorkBuddy fallback URLs.",
+        help="Query method. auto tries API first, then returns host-agent fallback URLs.",
     )
     parser.add_argument("--env", choices=sorted(TOPICS), default="prod")
     parser.add_argument("--time", dest="time_range")
@@ -525,7 +649,7 @@ def main() -> int:
     parser.add_argument(
         "--no-browser",
         action="store_true",
-        help="Only build WorkBuddy URLs; retained for compatibility.",
+        help="Only build URL fallback payloads; the historical workbuddy method is retained for compatibility.",
     )
     parser.add_argument(
         "--require-complete",
@@ -543,9 +667,22 @@ def main() -> int:
     if not args.query:
         parser.error("--query is required unless --close is used")
 
-    run_query = args.query
     time_range = args.time_range or TOPICS[args.env]["default_time"]
     expanded_time = args.expanded_time or TOPICS[args.env]["expanded_time"]
+    argument_errors = validate_cli_arguments(args, time_range, expanded_time)
+    if argument_errors:
+        print(
+            json.dumps(
+                {
+                    "error": "invalid_arguments",
+                    "messages": argument_errors,
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 1
+
+    run_query = args.query
     method = args.method
     if args.use_local_chrome and method == "auto":
         method = "local-chrome"
@@ -569,6 +706,20 @@ def main() -> int:
         expanded_url,
         warnings,
     )
+
+    if args.input_text:
+        text = Path(args.input_text).read_text(encoding="utf-8", errors="replace")
+        result = build_text_result(
+            base_result,
+            text,
+            source="input-text",
+            output_path=str(Path(args.input_text)),
+        )
+        if args.require_complete and result["is_complete"] is not True:
+            print(json.dumps(incomplete_text_result(result), ensure_ascii=False, indent=2))
+            return 1
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
 
     if method == "workbuddy":
         result = {
@@ -604,14 +755,14 @@ def main() -> int:
             result = {
                 **base_result,
                 "source": "api",
-                "fallback_method": None if is_complete else "workbuddy",
+                "fallback_method": None if is_complete is True else "workbuddy",
                 "output_path": output_path,
                 "window_id": None,
                 "load_more_clicks": 0,
-                "log_count": total_count,
+                "log_count": total_count if total_count_available else None,
                 "loaded_count": loaded_count,
                 "total_count_available": total_count_available,
-                "has_more": not is_complete,
+                "has_more": None if is_complete is None else not is_complete,
                 "is_complete": is_complete,
                 "completeness_ratio": (
                     round(loaded_count / max(total_count, 1), 3)
@@ -622,13 +773,13 @@ def main() -> int:
                 "contracts": parse_contracts(text),
                 "logs": logs,
             }
-            if args.require_complete and not is_complete:
+            if args.require_complete and is_complete is not True:
                 result.update(
                     {
                         "error": "INCOMPLETE_DATA",
                         "error_message": (
                             "[FATAL] API 数据不完整，禁止统计分析。"
-                            "请使用 WorkBuddy 内置浏览器完整加载，或显式切换本地 Chrome 备用路径。"
+                            "请使用宿主 Agent 浏览器完整加载，或显式切换本地 Chrome 备用路径。"
                         ),
                         "action_required": "FALLBACK_TO_WORKBUDDY",
                         "PROHIBITION": (
@@ -666,9 +817,7 @@ def main() -> int:
     has_more = False
     output_path = args.output
 
-    if args.input_text:
-        text = Path(args.input_text).read_text(encoding="utf-8", errors="replace")
-    elif method == "local-chrome":
+    if method == "local-chrome":
         ensure_ascii(run_query, "--query")
         window_id = ensure_window(build_url(run_query, args.env, time_range))
         time.sleep(args.wait)
@@ -696,60 +845,36 @@ def main() -> int:
         text = execute_js(window_id, "document.body.innerText", timeout=60)
         output_path = write_text(args.output, text)
 
-    log_count = parse_log_count(text) if text else 0
-    loaded_count = count_loaded_logs(text) if text else 0
-
-    if args.require_complete and has_more:
-        result = {
-            "error": "INCOMPLETE_DATA",
-            "error_message": (
-                f"[FATAL] 数据不完整，禁止统计分析。"
-                f"已加载 {loaded_count}/{log_count} 条"
-                f"（{loaded_count * 100 // max(log_count, 1)}%）。"
-                f"请缩小时间范围或拆分查询后重试。"
-            ),
-            "action_required": "SPLIT_AND_RETRY",
-            "suggested_actions": [
-                "缩小 --time 范围（如 now-1d,now 拆为 now-12h,now 和 now-1d,now-12h）",
-                "添加额外过滤条件（如 AND level:\"ERROR\"）减少结果集",
-                f"使用 --max-load-more {min(load_more_clicks * 3, 500)} 增大加载次数",
-            ],
-            "env": args.env,
-            "query": run_query,
-            "cls_url": cls_url,
-            "expanded_url": expanded_url,
-            "output_path": output_path,
-            "log_count": log_count,
-            "loaded_count": loaded_count,
-            "has_more": True,
-            "is_complete": False,
-            "completeness_ratio": round(loaded_count / max(log_count, 1), 3),
-            "PROHIBITION": (
-                "本次查询使用了 --require-complete 但数据未能完全加载。"
-                "严禁基于此不完整数据进行任何统计、计数、占比或汇总分析。"
-            ),
-        }
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        return 1
-
     has_text = bool(text)
-    result = {
-        **base_result,
-        "source": "local-chrome" if method == "local-chrome" else "input-text",
-        "fallback_method": None,
-        "output_path": output_path if has_text else None,
-        "window_id": window_id,
-        "load_more_clicks": load_more_clicks,
-        "log_count": log_count if has_text else None,
-        "loaded_count": loaded_count if has_text else None,
-        "has_more": has_more if has_text else None,
-        "is_complete": (not has_more) if has_text else None,
-        "completeness_ratio": (
-            round(loaded_count / max(log_count, 1), 3) if has_text and log_count > 0 else None
-        ),
-        "services": parse_services(text) if has_text else [],
-        "contracts": parse_contracts(text) if has_text else [],
-    }
+    if has_text:
+        result = build_text_result(
+            base_result,
+            text,
+            source="local-chrome",
+            output_path=output_path,
+            window_id=window_id,
+            load_more_clicks=load_more_clicks,
+            browser_has_more=has_more,
+        )
+    else:
+        result = {
+            **base_result,
+            "source": "local-chrome",
+            "fallback_method": None,
+            "output_path": None,
+            "window_id": window_id,
+            "load_more_clicks": load_more_clicks,
+            "log_count": None,
+            "loaded_count": None,
+            "has_more": None,
+            "is_complete": None,
+            "completeness_ratio": None,
+            "services": [],
+            "contracts": [],
+        }
+    if args.require_complete and result["is_complete"] is not True:
+        print(json.dumps(incomplete_text_result(result), ensure_ascii=False, indent=2))
+        return 1
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 

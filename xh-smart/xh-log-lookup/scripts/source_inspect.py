@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -162,6 +163,145 @@ def _context_rows(lines: list[str], start: int, end: int) -> list[dict]:
     ]
 
 
+def _match_from_path(
+    root: Path,
+    relative_text: str,
+    line_number: int,
+    pattern: str,
+    context: int,
+) -> dict | None:
+    relative = Path(relative_text)
+    if relative.is_absolute() or not _is_allowed_source_path(relative):
+        return None
+    try:
+        resolved = (root / relative).resolve(strict=True)
+        normalized = resolved.relative_to(root)
+        if not _is_allowed_source_path(normalized):
+            return None
+        if resolved.stat().st_size > MAX_SOURCE_BYTES:
+            return None
+        lines = resolved.read_text(encoding="utf-8", errors="replace").splitlines()
+    except (OSError, ValueError):
+        return None
+    index = line_number - 1
+    if index < 0 or index >= len(lines) or pattern not in lines[index]:
+        return None
+    return {
+        "file": relative.as_posix(),
+        "line": line_number,
+        "text": lines[index],
+        "before": _context_rows(lines, max(0, index - context), index),
+        "after": _context_rows(lines, index + 1, min(len(lines), index + context + 1)),
+    }
+
+
+def _search_source_rg(
+    root: Path,
+    pattern: str,
+    context: int,
+    max_results: int,
+) -> tuple[list[dict], bool] | None:
+    """Use ripgrep when available; None asks the caller to use Python fallback."""
+    rg = shutil.which("rg")
+    if not rg:
+        return None
+    command = [
+        rg,
+        "--json",
+        "--fixed-strings",
+        "--line-number",
+        "--no-heading",
+        "--color=never",
+        "--no-follow",
+        "--sort=path",
+        f"--max-filesize={MAX_SOURCE_BYTES}",
+        "--max-count",
+        str(max_results + 1),
+    ]
+    for suffix in sorted(SOURCE_SUFFIXES):
+        command.append(f"--glob=*{suffix}")
+    for directory in sorted(SKIP_DIRECTORIES):
+        command.append(f"--glob=!{directory}/**")
+        command.append(f"--glob=!**/{directory}/**")
+    command.extend(["--", pattern, str(root)])
+    try:
+        result = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode not in (0, 1):
+        return None
+
+    matches = []
+    try:
+        for raw_line in result.stdout.splitlines():
+            event = json.loads(raw_line)
+            if event.get("type") != "match":
+                continue
+            data = event.get("data") or {}
+            path_text = ((data.get("path") or {}).get("text") or "").strip()
+            if not path_text:
+                continue
+            path = Path(path_text)
+            try:
+                relative_text = path.resolve().relative_to(root).as_posix()
+            except ValueError:
+                continue
+            match = _match_from_path(
+                root,
+                relative_text,
+                int(data.get("line_number") or 0),
+                pattern,
+                context,
+            )
+            if match is not None:
+                matches.append(match)
+                if len(matches) > max_results:
+                    return matches[:max_results], True
+    except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+    return matches, False
+
+
+def _search_source_python(
+    root: Path,
+    pattern: str,
+    context: int,
+    max_results: int,
+) -> tuple[list[dict], bool]:
+    matches = []
+    for path, relative in _iter_source_files(root):
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if "\x00" in text:
+            continue
+        lines = text.splitlines()
+        for index, line in enumerate(lines):
+            if pattern not in line:
+                continue
+            matches.append(
+                {
+                    "file": relative.as_posix(),
+                    "line": index + 1,
+                    "text": line,
+                    "before": _context_rows(lines, max(0, index - context), index),
+                    "after": _context_rows(
+                        lines, index + 1, min(len(lines), index + context + 1)
+                    ),
+                }
+            )
+            if len(matches) >= max_results:
+                return matches, True
+    return matches, False
+
+
 def search_source(
     project: str,
     pattern: str,
@@ -177,36 +317,12 @@ def search_source(
         raise SourceInspectError(f"max_results must be between 1 and {MAX_RESULTS}")
 
     root = _resolve_project(project, project_paths)
-    matches = []
-    truncated = False
-
-    for path, relative in _iter_source_files(root):
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        if "\x00" in text:
-            continue
-        lines = text.splitlines()
-        for index, line in enumerate(lines):
-            if pattern not in line:
-                continue
-            before_start = max(0, index - context)
-            after_end = min(len(lines), index + context + 1)
-            matches.append(
-                {
-                    "file": relative.as_posix(),
-                    "line": index + 1,
-                    "text": line,
-                    "before": _context_rows(lines, before_start, index),
-                    "after": _context_rows(lines, index + 1, after_end),
-                }
-            )
-            if len(matches) >= max_results:
-                truncated = True
-                break
-        if truncated:
-            break
+    rg_result = _search_source_rg(root, pattern, context, max_results)
+    matches, truncated = (
+        rg_result
+        if rg_result is not None
+        else _search_source_python(root, pattern, context, max_results)
+    )
 
     return {
         "project": project,

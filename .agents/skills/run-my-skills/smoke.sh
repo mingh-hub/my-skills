@@ -2,6 +2,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+LOG_LOOKUP_ROOT="$REPO_ROOT/xh-smart/xh-log-lookup"
 PASS=0
 FAIL=0
 
@@ -22,7 +23,7 @@ run_check_output() {
   local expect="$2"
   shift 2
   local out
-  if out=$("$@" 2>&1) && echo "$out" | grep -q "$expect"; then
+  if out=$("$@" 2>&1) && [[ "$out" == *"$expect"* ]]; then
     echo "  [PASS] $label"
     PASS=$((PASS + 1))
   else
@@ -35,67 +36,58 @@ run_check_output() {
 echo "=== my-skills smoke test ==="
 echo ""
 
-# ── 1. Python environment ──
-echo "[1/3] Python environment"
+# 1. Python environment
+echo "[1/4] Python environment"
 run_check "python3 available" python3 --version
+run_check "Python 3.10+" python3 -c \
+  'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)'
 
-# ── 2. Auto-discover all Python tools and run --help ──
+# 2. Offline CLI/import checks
 echo ""
-echo "[2/3] Python tools (auto-discovered)"
+echo "[2/4] xh-log-lookup offline CLI checks"
 
-TOOLS=()
-while IFS= read -r -d '' f; do
-  TOOLS+=("$f")
-done < <(find "$REPO_ROOT" -path '*/tools/*.py' -type f -print0 | sort -z)
+CLI_NAMES=(
+  cls_log_query.py
+  resolve_hermes_session.py
+  resolve_workspace.py
+  send_feishu_card.py
+  source_inspect.py
+  validate_query_anchors.py
+)
 
-if [ ${#TOOLS[@]} -eq 0 ]; then
-  echo "  [FAIL] no Python tools found under */tools/*.py"
-  FAIL=$((FAIL + 1))
-else
-  for tool in "${TOOLS[@]}"; do
-    label="$(echo "$tool" | sed "s|$REPO_ROOT/||")"
-    local_out=""
-    if local_out=$(python3 "$tool" --help 2>&1); then
-      echo "  [PASS] $label --help"
-      PASS=$((PASS + 1))
-    elif echo "$local_out" | grep -q "ModuleNotFoundError"; then
-      mod=$(echo "$local_out" | grep "ModuleNotFoundError" | sed "s/.*No module named '//;s/'.*//")
-      echo "  [SKIP] $label --help (missing module: $mod)"
-    else
-      echo "  [FAIL] $label --help"
-      FAIL=$((FAIL + 1))
-    fi
-  done
-fi
-
-# ── Deep checks for tools that support safe modes ──
-# cls_query.py: --no-browser produces JSON with cls_url
-for tool in "${TOOLS[@]}"; do
-  case "$(basename "$tool")" in
-    cls_query.py)
-      run_check_output "$(basename "$tool") --no-browser URL build" "cls_url" \
-        python3 "$tool" --env prod --query 'serviceName:"order"' --no-browser
-      ;;
-  esac
+for name in "${CLI_NAMES[@]}"; do
+  run_check "scripts/$name --help" \
+    env PYTHONDONTWRITEBYTECODE=1 python3 "$LOG_LOOKUP_ROOT/scripts/$name" --help
 done
 
-# validate_query_anchors.py: parse any SKILL.md with anchor tables
-for tool in "${TOOLS[@]}"; do
-  if [ "$(basename "$tool")" = "validate_query_anchors.py" ]; then
-    tool_dir="$(dirname "$tool")/.."
-    while IFS= read -r -d '' skill_md; do
-      skill_label="$(echo "$skill_md" | sed "s|$REPO_ROOT/||")"
-      if grep -q '方法入口' "$skill_md" 2>/dev/null; then
-        run_check "validate anchors: $skill_label" \
-          python3 "$tool" --skill "$skill_md" --json
-      fi
-    done < <(find "$tool_dir" -name 'SKILL.md' -type f -print0 | sort -z)
-  fi
-done
+run_check "skill_config.py import" env \
+  PYTHONDONTWRITEBYTECODE=1 LOG_LOOKUP_ROOT="$LOG_LOOKUP_ROOT" python3 -c '
+import importlib.util
+import os
+from pathlib import Path
+path = Path(os.environ["LOG_LOOKUP_ROOT"]) / "scripts" / "skill_config.py"
+spec = importlib.util.spec_from_file_location("skill_config_smoke", path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+'
 
-# ── 3. Auto-discover YAML agent definitions ──
+run_check_output "cls_log_query.py WorkBuddy URL-only" '"source": "workbuddy"' \
+  env PYTHONDONTWRITEBYTECODE=1 python3 "$LOG_LOOKUP_ROOT/scripts/cls_log_query.py" \
+    --env prod --query 'serviceName:"order"' --method workbuddy
+
+run_check_output "anchors are advisory without source" '"verification_status"' \
+  env PYTHONDONTWRITEBYTECODE=1 python3 \
+    "$LOG_LOOKUP_ROOT/scripts/validate_query_anchors.py" --all --json
+
+# 3. Unit tests
 echo ""
-echo "[3/3] Agent definitions (auto-discovered)"
+echo "[3/4] xh-log-lookup unit tests"
+run_check "unittest discover" env PYTHONDONTWRITEBYTECODE=1 \
+  python3 -m unittest discover -s "$LOG_LOOKUP_ROOT/tests" -p 'test_*.py'
+
+# 4. Auto-discover YAML agent definitions
+echo ""
+echo "[4/4] Agent definitions (auto-discovered)"
 
 YAMLS=()
 while IFS= read -r -d '' f; do
@@ -118,7 +110,7 @@ except Exception as e:
   done
 fi
 
-# ── Summary ──
+# Summary
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1

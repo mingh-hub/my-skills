@@ -5,13 +5,14 @@
 - 何时读取
 - 标题和颜色
 - 必填内容
+- 业务信息保真边界
 - 卡片结构
 - 按钮 URL
 - 历史 Markdown 降级
 
 ## 何时读取
 
-当前 `xh-log-lookup` 主流程优先通过 `scripts/send_feishu_card.py --quiet-success` 发送飞书卡片，发送成功后静默或只做极短确认；发送失败、来源缺失或候选详情获取失败时才降级为飞书兼容文本结论。需要 CLS 链接时，可用 `cls_query.py` 输出的 `cls_url` / `expanded_url`。
+当前 `xh-log-lookup` 主流程优先通过 `scripts/send_feishu_card.py --quiet-success` 发送飞书卡片，发送成功后静默或只做极短确认；发送失败、来源缺失或候选详情获取失败时才降级为飞书兼容文本结论。需要 CLS 链接时，可用 `cls_log_query.py` 输出的 `cls_url` / `expanded_url`。
 
 主流程见 `../SKILL.md`。本文作为卡片内容组织和历史模板参考。
 
@@ -78,6 +79,15 @@ ERROR/查询失败 > WARN/失败/无结果 > SUCCESS
 8. `⏱ 扩大查询范围`
 
 > 如果结果来自采样或 count 提取失败，必须在卡片中说明“采样”或“总数未成功提取”。
+
+## 业务信息保真边界
+
+飞书卡片和发送失败后的纯文本 fallback 使用相同的业务信息明文契约：
+
+- 手机号、银行卡号、身份证号、姓名等业务排查信息按查询结果原文输出，不得主动改写为星号、部分隐藏值、摘要、哈希或密文。
+- 数据源本身已脱敏或加密时，原样展示数据源返回值，不猜测、拼接或跨日志还原；同时在 `analysis` 或风险提示中注明“数据源已脱敏/加密，无法确认完整值”。
+- `FEISHU_APP_SECRET`、访问 Token、Cookie 等认证秘密不属于业务排查信息，禁止写入卡片或纯文本 fallback。
+- 路由和传输审计继续不记录原始查询文本或凭据。卡片超过 28KB 时仅按 UTF-8 合法截断并保留提示，不得用掩码代替截断。
 
 ## 5. 卡片结构
 
@@ -208,7 +218,7 @@ https://datasight-1300455117.internal.clsconsole.tencent-cloud.com/cls/search?re
 正确做法：
 
 - 按钮 URL 的 `queryBase64` 使用 ASCII 查询，例如 `serviceName:"order" AND message:"{标识符}"`
-- 真实中文条件不要进入 `queryBase64`；优先从 WorkBuddy 页面全文或本地 Chrome 备用路径提取的全文里二次过滤
+- 真实中文条件不要进入 `queryBase64`；优先从宿主 Agent 页面全文或本地 Chrome 备用路径提取的全文里二次过滤
 - 详细规则见 `chinese-queryBase64-experiments.md` 和 `cls-react-contenteditable-injection.md`
 
 ## 7. 历史降级 Markdown
